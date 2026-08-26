@@ -297,6 +297,8 @@ const TASKS: FieldTask[] = [
   },
 ];
 
+export const TASK_IDS = TASKS.map((t) => t.id);
+
 function iso(d: Date) {
   return d.toISOString();
 }

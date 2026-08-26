@@ -48,3 +48,18 @@ npm start -- --port 43147
 Next.js (App Router), TypeScript, Tailwind CSS, shadcn/ui, Leaflet / OpenStreetMap.
 
 Photos, shifts, leave and task progress persist in `localStorage` under `camartes-field-v1`.
+
+## Android APK (testing)
+
+A debug APK is built with Capacitor (`com.camartes.field`).
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+npm run apk
+```
+
+The file is written to `android/app/build/outputs/apk/debug/app-debug.apk`. Copy it to a phone and allow install from unknown sources. This is a debug build, not a Play Store release.
+
+On first launch, allow **Location** and **Camera** when Android asks. If GPS is unavailable, use **Location source** in the app to simulate a Hyderabad pin.
+

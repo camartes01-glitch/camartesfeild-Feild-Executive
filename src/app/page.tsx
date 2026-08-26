@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, MapPinned, ShieldCheck } from "lucide-react";
+import { Camera, MapPinned, ShieldCheck, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -73,6 +73,16 @@ export default function LoginPage() {
             </form>
             <p className="text-muted-foreground mt-4 text-center text-xs">
               Demo accounts: rahul@camartes.com or priya@camartes.com · password field2026
+            </p>
+            <a
+              href="/camartes-field-debug.apk"
+              className="text-primary mt-3 flex items-center justify-center gap-1.5 text-sm font-medium"
+            >
+              <Smartphone className="size-4" />
+              Download Android APK for testing
+            </a>
+            <p className="text-muted-foreground mt-1 text-center text-xs">
+              Debug build · allow install from this source on your phone
             </p>
           </CardContent>
         </Card>
