@@ -60,13 +60,13 @@ export default function HomePage() {
                     {
                       id: "store",
                       label: next.store.name,
-                      color: "#1d4ed8",
+                      color: "#FF6B00",
                       point: next.store.geo,
                     },
                     {
                       id: "cust",
                       label: next.customerPlace.name,
-                      color: "#047857",
+                      color: "#10B981",
                       point: next.customerPlace.geo,
                     },
                   ]

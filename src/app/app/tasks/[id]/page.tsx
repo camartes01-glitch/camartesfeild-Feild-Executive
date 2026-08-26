@@ -93,8 +93,8 @@ function TaskBody({ task }: { task: FieldTask }) {
         center={you}
         markers={[
           { id: "you", label: "You", color: "#FF6B35", point: you },
-          { id: "store", label: task.store.name, color: "#1d4ed8", point: task.store.geo },
-          { id: "cust", label: task.customerPlace.name, color: "#047857", point: task.customerPlace.geo },
+          { id: "store", label: task.store.name, color: "#FF6B00", point: task.store.geo },
+          { id: "cust", label: task.customerPlace.name, color: "#10B981", point: task.customerPlace.geo },
         ]}
       />
 

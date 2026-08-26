@@ -21,6 +21,10 @@ export const metadata: Metadata = {
     "Field executive app for Camartes camera rental: live location, attendance, leave, deliveries and geotagged proofs.",
 };
 
+export const viewport = {
+  themeColor: "#FF6B35",
+};
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html

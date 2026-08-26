@@ -19,12 +19,12 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 export function KindBadge({ kind }: { kind: TaskKind }) {
   const tone =
     kind === "delivery"
-      ? "bg-amber-100 text-amber-900"
+      ? "bg-[#FFEDD5] text-[#EA580C]"
       : kind === "return"
-        ? "bg-sky-100 text-sky-900"
+        ? "bg-[#DBEAFE] text-[#1D4ED8]"
         : kind === "inventory"
-          ? "bg-violet-100 text-violet-900"
-          : "bg-emerald-100 text-emerald-900";
+          ? "bg-[#EDE9FE] text-[#7C3AED]"
+          : "bg-[#D1FAE5] text-[#059669]";
   return (
     <Badge variant="secondary" className={tone}>
       {KIND_LABEL[kind]}

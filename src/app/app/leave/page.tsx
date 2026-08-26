@@ -94,8 +94,8 @@ export default function LeavePage() {
               leave: (day) => leaveDates.has(format(day, "yyyy-MM-dd")),
             }}
             modifiersClassNames={{
-              worked: "bg-emerald-100 text-emerald-950",
-              leave: "bg-amber-100 text-amber-950",
+              worked: "bg-[#D1FAE5] text-[#065F46]",
+              leave: "bg-[#FFEDD5] text-[#C2410C]",
             }}
           />
           <div className="text-muted-foreground mt-2 flex gap-3 text-xs">
