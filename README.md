@@ -2,7 +2,7 @@
 
 Field executive app for [camartes.com](https://camartes.com) staff who verify customer addresses, pick camera kits from rental hubs, deliver to customers, collect returns, and count inventory in Hyderabad.
 
-This first slice runs in the browser (demo login, local storage). It is ready to connect to a Camartes backend later.
+This first slice runs in the browser (demo login, local storage). It is ready to connect to a Camartes backend later. UI colors follow camartes.com: `#FF6B35` orange on `#FFF7ED` cream.
 
 ## What it does
 
