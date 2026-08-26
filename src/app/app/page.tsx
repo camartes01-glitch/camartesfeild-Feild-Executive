@@ -54,7 +54,7 @@ export default function HomePage() {
           <FieldMap
             center={you}
             markers={[
-              { id: "you", label: "You", color: "#d97706", point: you },
+                  { id: "you", label: "You", color: "#FF6B35", point: you },
               ...(next
                 ? [
                     {

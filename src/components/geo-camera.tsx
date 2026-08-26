@@ -30,7 +30,7 @@ function stampPhoto(
       const bar = Math.max(72, Math.round(h * 0.16));
       ctx.fillStyle = "rgba(8,12,20,0.72)";
       ctx.fillRect(0, h - bar, w, bar);
-      ctx.fillStyle = "#F5C451";
+      ctx.fillStyle = "#FF6B35";
       ctx.font = `600 ${Math.max(14, Math.round(w * 0.028))}px ui-sans-serif, system-ui`;
       ctx.fillText("CAMARTES · geotagged proof", 16, h - bar + 22);
       ctx.fillStyle = "#fff";

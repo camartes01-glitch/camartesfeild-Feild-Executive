@@ -29,7 +29,7 @@ export default function LoginPage() {
 
   return (
     <div className="relative flex min-h-svh items-center justify-center px-4 py-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_oklch(0.92_0.06_70),_transparent_55%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_#ffedd5,_transparent_55%)]" />
       <div className="relative w-full max-w-md space-y-6">
         <div className="space-y-2 text-center">
           <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
