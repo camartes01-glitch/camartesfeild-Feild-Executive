@@ -51,16 +51,90 @@ function safeJoin(urlPath) {
   return full;
 }
 
+const DOWNLOAD_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Download Camartes Field</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #FFF7ED; color: #111827; max-width: 32rem; margin: 48px auto; padding: 0 20px; }
+    a.btn { display: inline-block; background: #FF6B35; color: #fff; font-weight: 800; text-decoration: none; padding: 14px 20px; border-radius: 12px; margin: 8px 8px 8px 0; }
+    p { color: #6B7280; line-height: 1.5; }
+    code { background: #FFEDD5; padding: 2px 6px; border-radius: 4px; color: #111827; }
+  </style>
+</head>
+<body>
+  <h1>Camartes Field APK</h1>
+  <p>45 MB arm64 release. On the phone: enable <strong>Install unknown apps</strong>, then open the downloaded file.</p>
+  <p><a class="btn" href="https://tmpfiles.org/dl/1787853728.85af0ccb7b79f842/wdwKGU8IE254/camartes-field.apk">Download on this phone (45 MB)</a></p>
+  <p>Use the orange button on the phone. Do not type <code>127.0.0.1</code> into Chrome — that address is the cloud machine, not your device, so the download will fail.</p>
+  <p>Demo: rahul / priya / arjun @ camartes.com · password <code>field2026</code></p>
+  <p>The public file host may expire after a few hours. If the link 404s, ask in this chat and we will post a fresh one.</p>
+</body>
+</html>`;
+
 function pickFile(urlPath) {
   const pathname = (urlPath || "/").split("?")[0];
   if (pathname === "/health") return { health: true };
+  if (pathname === "/download" || pathname === "/download.html" || pathname === "/apk") {
+    return { download: true };
+  }
   const full = safeJoin(urlPath);
+  if (pathname.toLowerCase().endsWith(".apk")) {
+    if (full && fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+    return { missing: true };
+  }
   if (!full) return path.join(ROOT, "index.html");
   if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
   if (fs.existsSync(full + ".html")) return full + ".html";
   const asIndex = path.join(full, "index.html");
   if (fs.existsSync(asIndex)) return asIndex;
   return path.join(ROOT, "index.html");
+}
+
+function sendApk(req, res, file) {
+  const st = fs.statSync(file);
+  const size = st.size;
+  const headers = {
+    "Content-Type": "application/vnd.android.package-archive",
+    "Content-Disposition": 'attachment; filename="camartes-field.apk"',
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "public, max-age=120",
+    "Access-Control-Allow-Origin": "*",
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+  const range = String(req.headers.range || "");
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(range);
+  let start = 0;
+  let end = size - 1;
+  if (m) {
+    if (m[1]) start = Number(m[1]);
+    if (m[2]) end = Number(m[2]);
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
+      headers["Content-Range"] = `bytes */${size}`;
+      res.writeHead(416, headers);
+      res.end();
+      return;
+    }
+    end = Math.min(end, size - 1);
+    headers["Content-Range"] = `bytes ${start}-${end}/${size}`;
+    headers["Content-Length"] = String(end - start + 1);
+    res.writeHead(206, headers);
+  } else {
+    headers["Content-Length"] = String(size);
+    res.writeHead(200, headers);
+  }
+  if (req.method === "HEAD") {
+    res.end();
+    return;
+  }
+  fs.createReadStream(file, { start, end }).pipe(res);
 }
 
 function tokenFrom(req) {
@@ -108,8 +182,36 @@ const server = http.createServer((req, res) => {
     res.end("ok");
     return;
   }
+  if (picked && picked.download) {
+    const body = Buffer.from(DOWNLOAD_HTML);
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Length": String(body.length),
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    res.end(body);
+    return;
+  }
+  if (picked && picked.missing) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("APK not found");
+    return;
+  }
   const file = picked;
   const ext = path.extname(file).toLowerCase();
+  if (ext === ".apk") {
+    try {
+      sendApk(req, res, file);
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("APK not found");
+    }
+    return;
+  }
   res.setHeader("Content-Type", TYPES[ext] || "application/octet-stream");
   res.setHeader("Cache-Control", ext === ".html" ? "no-store" : "public, max-age=120");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -123,9 +225,6 @@ const server = http.createServer((req, res) => {
       res.statusCode = 404;
       res.end("Not found");
       return;
-    }
-    if (ext === ".apk") {
-      res.setHeader("Content-Disposition", 'attachment; filename="camartes-field.apk"');
     }
     let body = data;
     if (ext === ".html") {
@@ -145,10 +244,10 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.keepAliveTimeout = 120000;
-server.headersTimeout = 125000;
-server.requestTimeout = 120000;
-server.timeout = 120000;
+server.keepAliveTimeout = 600000;
+server.headersTimeout = 610000;
+server.requestTimeout = 600000;
+server.timeout = 600000;
 
 server.listen(PORT, HOST, () => {
   console.log(`Camartes Field preview http://${HOST}:${PORT}`);

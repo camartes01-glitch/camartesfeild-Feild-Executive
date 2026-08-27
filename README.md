@@ -55,7 +55,7 @@ npx expo export --platform web
 npm run preview
 ```
 
-Then open `http://127.0.0.1:43172`. The preview server maps `/attendance` and `/hours` to HTML files so tab routes do not 404.
+Cloud preview listens on `0.0.0.0:43156`. Use Cursor Preview (or `/download.html`) — `127.0.0.1` on a phone is your phone, not this VM.
 
 ## Demo logins
 
@@ -77,6 +77,8 @@ cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
 
 The signed APK is `android/app/build/outputs/apk/release/app-release.apk` (debug keystore). Sideload on an arm64 phone; enable “install unknown apps”.
+
+Do not open `http://127.0.0.1:…/camartes-field.apk` on the phone. Use the download page from Cursor Preview (`/download.html`) or a public file link posted in chat.
 
 ## Stack
 
