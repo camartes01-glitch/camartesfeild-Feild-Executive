@@ -48,7 +48,7 @@ Scan the QR with **Expo Go**, or preview on web:
 npx expo start --web --port 43148
 ```
 
-Static export (used for the cloud preview):
+Web export for the cloud preview is a single-page bundle (`web.output: "single"`) so Expo Router does not SSR-hydrate:
 
 ```bash
 npx expo export --platform web
