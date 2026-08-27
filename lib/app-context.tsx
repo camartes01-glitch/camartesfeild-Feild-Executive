@@ -13,6 +13,7 @@ import * as Location from "expo-location";
 import { format } from "date-fns";
 import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, USERS } from "@/lib/seed";
 import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
+import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
 import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
 import type {
@@ -33,7 +34,7 @@ import type {
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v6";
+const KEY = "camartes-field-v7";
 
 export type LocationMode = "gps" | string;
 
@@ -64,6 +65,7 @@ type AppContextValue = {
   addPhoto: (taskId: string, photo: GeoPhoto) => void;
   setTaskStatus: (id: string, status: TaskStatus, label: string) => void;
   verifyOtp: (taskId: string, code: string) => boolean;
+  generateOtp: (taskId: string) => string;
   matchSerial: (taskId: string, serial: string) => boolean;
   sendWhatsApp: (taskId: string, kind: "eta" | "delivered" | "collected") => void;
   addDamage: (report: Omit<DamageReport, "id" | "at">) => void;
@@ -106,7 +108,9 @@ function mergeState(parsed: Partial<AppState>): AppState {
     return {
       ...seed,
       ...saved,
-      otpCode: saved.otpCode ?? seed.otpCode,
+      otpCode: saved.otpCode,
+      otpGeneratedAt: saved.otpGeneratedAt,
+      otpVerified: saved.otpVerified,
       items: saved.items?.length ? saved.items : seed.items,
       photos: saved.photos ?? seed.photos,
       timeline: saved.timeline?.length ? saved.timeline : seed.timeline,
@@ -501,11 +505,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     audit(label);
   }, [queueIfOffline, audit]);
 
+  const generateOtp = useCallback(
+    (taskId: string) => {
+      const pin = generateHandoverPin();
+      updateTask(taskId, { otpCode: pin, otpGeneratedAt: new Date().toISOString(), otpVerified: false });
+      audit(`In-app handover PIN generated on ${taskId}`);
+      return pin;
+    },
+    [updateTask, audit],
+  );
+
   const verifyOtp = useCallback((taskId: string, code: string) => {
     const task = state.tasks.find((t) => t.id === taskId);
-    if (!task?.otpCode || task.otpCode !== code.trim()) return false;
+    if (!task?.otpCode || !task.otpGeneratedAt) return false;
+    if (task.otpCode !== code.trim()) return false;
     updateTask(taskId, { otpVerified: true, customerConfirmed: true });
-    audit(`OTP verified on ${taskId}`);
+    audit(`In-app OTP confirmed on ${taskId}`);
     return true;
   }, [state.tasks, updateTask, audit]);
 
@@ -704,6 +719,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addPhoto,
     setTaskStatus,
     verifyOtp,
+    generateOtp,
     matchSerial,
     sendWhatsApp,
     addDamage,

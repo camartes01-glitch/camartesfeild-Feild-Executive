@@ -23,7 +23,7 @@ function checkpoints(kind: TaskKind) {
 export default function TaskDetailScreen() {
   const { id: idParam } = useLocalSearchParams<{ id: string | string[] }>();
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const { state, live, setTaskStatus, updateTask, verifyOtp, matchSerial, sendWhatsApp, addDamage } = useApp();
+  const { state, live, setTaskStatus, updateTask, verifyOtp, generateOtp, matchSerial, sendWhatsApp, addDamage } = useApp();
   const lang = state.language;
   const [otp, setOtp] = useState("");
   const [serial, setSerial] = useState("");
@@ -71,7 +71,7 @@ export default function TaskDetailScreen() {
         return;
       }
     } else if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
-      Alert.alert("OTP", "Customer OTP is required for handover.");
+      Alert.alert("Handover PIN", "Generate an in-app PIN and have the customer confirm it. No SMS.");
       return;
     }
     if (current.kind === "inventory") {
@@ -196,28 +196,51 @@ export default function TaskDetailScreen() {
 
       {task.kind === "delivery" || task.kind === "return" ? (
         <Card>
-          <Text style={styles.h}>{t(lang, "proof")}</Text>
+          <Text style={styles.h}>{t(lang, "otp")}</Text>
           {task.otpVerified ? (
-            <Muted>OTP accepted. Customer handover PIN is on file.</Muted>
+            <Muted>In-app PIN confirmed. Handover is locked on this booking.</Muted>
           ) : (
             <>
               <Muted>
-                Ask the customer for the 4-digit SMS PIN. Demo code {task.otpCode ?? "—"}.
+                Create the 4-digit PIN in this app and show it to the customer. Do not send it by SMS.
               </Muted>
-              <TextInput
-                value={otp}
-                onChangeText={setOtp}
-                placeholder="4-digit OTP"
-                keyboardType="number-pad"
-                style={styles.qty}
-              />
-              <Button
-                label={t(lang, "verifyOtp")}
-                onPress={() => {
-                  if (!verifyOtp(task.id, otp)) Alert.alert("Wrong OTP", "Ask the customer to resend.");
-                  else setOtp("");
-                }}
-              />
+              {task.otpCode && task.otpGeneratedAt ? (
+                <>
+                  <Text style={styles.pin}>{task.otpCode}</Text>
+                  <Muted>Hand the phone to the customer so they can type this PIN below.</Muted>
+                  <TextInput
+                    value={otp}
+                    onChangeText={setOtp}
+                    placeholder="Customer types PIN"
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    style={styles.qty}
+                  />
+                  <Button
+                    label={t(lang, "verifyOtp")}
+                    onPress={() => {
+                      if (!verifyOtp(task.id, otp)) Alert.alert("Wrong PIN", "It must match the number on this screen.");
+                      else setOtp("");
+                    }}
+                  />
+                  <Button
+                    label="Generate new PIN"
+                    variant="outline"
+                    onPress={() => {
+                      generateOtp(task.id);
+                      setOtp("");
+                    }}
+                  />
+                </>
+              ) : (
+                <Button
+                  label="Generate handover PIN"
+                  onPress={() => {
+                    generateOtp(task.id);
+                    setOtp("");
+                  }}
+                />
+              )}
             </>
           )}
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -338,4 +361,12 @@ const styles = StyleSheet.create({
   link: { color: colors.primaryDark, fontWeight: "600" },
   item: { borderWidth: 1, borderColor: colors.peachBorder, borderRadius: 10, padding: 10, gap: 6 },
   qty: { borderWidth: 1, borderColor: colors.peachBorder, borderRadius: 8, padding: 8, backgroundColor: "#fff" },
+  pin: {
+    fontSize: 40,
+    fontWeight: "800",
+    letterSpacing: 8,
+    color: colors.primaryDark,
+    textAlign: "center",
+    paddingVertical: 8,
+  },
 });

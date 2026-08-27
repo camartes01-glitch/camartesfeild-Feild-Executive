@@ -98,6 +98,7 @@ export type FieldTask = {
   inventoryCounted?: Record<string, number>;
   otpCode?: string;
   otpVerified?: boolean;
+  otpGeneratedAt?: string;
   scannedSerials?: string[];
   whatsappSent?: boolean;
   customerRating?: number;

@@ -14,7 +14,7 @@ SOS calls the **city manager nearest to your live GPS**. Device GPS is requested
 - Live device GPS; shift trail only while clocked in
 - Address verification, store pickup → customer delivery, customer return → store, hub inventory
 - Services: same vendor categories as camartes.com (freelancer + business)
-- Customer OTP, serial match, WhatsApp updates, damage notes, geotagged photos
+- In-app handover PIN (generated on device, not SMS), serial match, WhatsApp updates, damage notes, geotagged photos
 - Hours, roster, overtime, HR leave balances (casual / sick / earned)
 - Hub team map, travel expenses, kit-care training, SOS to the nearest city manager, English / Hindi / Telugu
 
@@ -39,7 +39,7 @@ Password for all: `field2026`
 - `priya@camartes.com` (CM-FE-109)
 - `arjun@camartes.com` (CM-FE-112)
 
-Delivery OTP on BK-88244: **4821**. Return OTP on BK-87901: **9033**.
+On delivery and return jobs, tap **Generate handover PIN** in the task. Show the 4-digit number to the customer and have them type it on the same phone. The PIN is created in the app — it is never sent by SMS.
 
 If device GPS is unavailable, pick **Banjara Hills hub** on Home so punch-in is inside the geofence.
 

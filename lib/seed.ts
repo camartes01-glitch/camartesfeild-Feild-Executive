@@ -171,12 +171,11 @@ const TASKS: FieldTask[] = [
       },
     ],
     notes:
-      "Pick kit from Banjara Hills hub, seal bag, deliver to Meera Films. Photo at store pickup and at customer handover.",
+      "Pick kit from Banjara Hills hub, seal bag, deliver to Meera Films. Photo at store pickup and at customer handover. Generate the handover PIN in the app — do not SMS it.",
     photos: [],
     timeline: [
       event("e1", "2026-08-26T07:12:00+05:30", "Kit reserved at Banjara hub"),
     ],
-    otpCode: "4821",
     scannedSerials: [],
     slaMinutes: 90,
   },
@@ -208,12 +207,11 @@ const TASKS: FieldTask[] = [
       },
     ],
     notes:
-      "Inspect for damage at customer site, photograph kit, return to HITEC City hub.",
+      "Inspect for damage at customer site, photograph kit, return to HITEC City hub. Generate the collection PIN in the app — do not SMS it.",
     photos: [],
     timeline: [
       event("e1", "2026-08-25T18:40:00+05:30", "Return window confirmed"),
     ],
-    otpCode: "9033",
     scannedSerials: [],
     slaMinutes: 75,
   },
@@ -466,7 +464,7 @@ export function createInitialState(): AppState {
       {
         id: "n1",
         title: "Wedding kit SLA",
-        body: "BK-88244 Meera Films must be on site by 12:00. OTP 4821.",
+        body: "BK-88244 Meera Films must be on site by 12:00. Generate the handover PIN in the app (no SMS).",
         at: "2026-08-26T07:15:00+05:30",
         read: false,
       },
@@ -488,7 +486,7 @@ export function createInitialState(): AppState {
       {
         id: "tr2",
         title: "Gimbal handover",
-        body: "Balance check on site. Note any bent axis before the customer signs OTP.",
+        body: "Balance check on site. Note any bent axis before the customer confirms the in-app PIN.",
         done: true,
       },
     ],
