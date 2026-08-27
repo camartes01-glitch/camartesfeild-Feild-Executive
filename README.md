@@ -42,11 +42,20 @@ npm install
 npx expo start
 ```
 
-Scan the QR with **Expo Go**, or:
+Scan the QR with **Expo Go**, or preview on web:
 
 ```bash
 npx expo start --web --port 43148
 ```
+
+Static export (used for the cloud preview):
+
+```bash
+npx expo export --platform web
+npm run preview
+```
+
+Then open `http://127.0.0.1:43172`. The preview server maps `/attendance` and `/hours` to HTML files so tab routes do not 404.
 
 ## Demo logins
 

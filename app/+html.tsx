@@ -1,4 +1,3 @@
-import { ScrollViewStyleReset } from 'expo-router/html';
 import type { ReactNode } from 'react';
 
 // This file is web-only and used to configure the root HTML for every
@@ -17,11 +16,7 @@ export default function Root({ children }: { children: ReactNode }) {
           Disable body scrolling on web. This makes ScrollView components work closer to how they do on native.
           However, body scrolling is often nice to have for mobile web. If you want to enable it, remove this line.
         */}
-        <ScrollViewStyleReset />
-
-        {/* Using raw CSS styles as an escape-hatch to ensure the background color never flickers in dark-mode. */}
         <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
-        {/* Add any additional <head> elements that you want globally available on web... */}
       </head>
       <body>{children}</body>
     </html>
@@ -29,8 +24,15 @@ export default function Root({ children }: { children: ReactNode }) {
 }
 
 const responsiveBackground = `
+html, body, #root {
+  height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
 body {
   background-color: #FFF7ED;
+  overflow: auto !important;
+  margin: 0;
 }
 @media (prefers-color-scheme: dark) {
   body {

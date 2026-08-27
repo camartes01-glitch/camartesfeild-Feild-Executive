@@ -38,7 +38,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web --port 43148 --host lan"
+    "web": "expo start --web --port 43148 --host lan",
+    "preview": "node scripts/serve-web.js"
   },
   "private": true
 }
