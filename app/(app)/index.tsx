@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Platform, ScrollView, StyleSheet, Text, TextInput, View, Alert } from "react-native";
 import { Href, router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Button, Card, Muted, Title } from "@/components/ui";
@@ -8,9 +8,10 @@ import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { formatKm, haversineKm, pathKm } from "@/lib/geo";
-import { formatDuration, monthStats, shiftMinutes } from "@/lib/hours";
+import { formatDuration, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
 import { LOCATION_PRESETS, TEAM } from "@/lib/seed";
 import { t } from "@/lib/i18n";
+import { format, parseISO } from "date-fns";
 
 export default function HomeScreen() {
   const {
@@ -31,8 +32,8 @@ export default function HomeScreen() {
   const next = openTasks[0];
   const stats = monthStats(state.shifts);
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
-  const today = new Date().toISOString().slice(0, 10);
-  const todayKm = pathKm(state.pings.filter((p) => p.at.slice(0, 10) === today));
+  const today = localYmd();
+  const todayKm = pathKm(state.pings.filter((p) => format(parseISO(p.at), "yyyy-MM-dd") === today));
   const unread = state.notices.filter((n) => !n.read).length;
   const [override, setOverride] = useState("");
   const [geoError, setGeoError] = useState(false);
@@ -41,10 +42,13 @@ export default function HomeScreen() {
     let selfieUri: string | undefined;
     if (Platform.OS !== "web") {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (perm.granted) {
-        const shot = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, quality: 0.4 });
-        selfieUri = shot.assets?.[0]?.uri;
+      if (!perm.granted) {
+        Alert.alert("Camera", t(lang, "selfieNeeded"));
+        return;
       }
+      const shot = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, quality: 0.4 });
+      if (shot.canceled || !shot.assets[0]) return;
+      selfieUri = shot.assets[0].uri;
     }
     const err = clockIn({ selfieUri: selfieUri ?? (Platform.OS === "web" ? "web-selfie" : undefined), overrideReason: override });
     if (err === "geofence") setGeoError(true);
@@ -102,7 +106,7 @@ export default function HomeScreen() {
             ? live
               ? `${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} · ±${Math.round(live.accuracyM)} m`
               : "Getting fix…"
-            : "Clock in to start GPS tracking."}
+            : "Pick a hub pin (web defaults to Banjara Hills) or clock in for live GPS."}
         </Muted>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {LOCATION_PRESETS.map((p) => {
@@ -124,19 +128,15 @@ export default function HomeScreen() {
         <Text style={styles.body}>
           {openShift ? formatDuration(shiftMinutes(openShift)) : `${stats.days} days · ${formatDuration(stats.minutes)}`}
         </Text>
-        {geoError ? (
-          <>
-            <Muted>{t(lang, "geofenceFail")}</Muted>
-            <TextInput
-              placeholder="Override reason (traffic, GPS error…)"
-              value={override}
-              onChangeText={setOverride}
-              style={styles.input}
-            />
-          </>
-        ) : (
-          <Muted>{t(lang, "selfieNeeded")}</Muted>
-        )}
+        {geoError ? <Muted>{t(lang, "geofenceFail")}</Muted> : <Muted>{t(lang, "selfieNeeded")}</Muted>}
+        {!openShift ? (
+          <TextInput
+            placeholder="Override reason if you are not at a hub"
+            value={override}
+            onChangeText={setOverride}
+            style={styles.input}
+          />
+        ) : null}
         {openShift ? (
           <Button label={t(lang, "clockOut")} variant="outline" onPress={clockOut} />
         ) : (

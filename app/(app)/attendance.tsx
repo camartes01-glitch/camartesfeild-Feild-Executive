@@ -14,7 +14,7 @@ export default function AttendanceScreen() {
   const lang = state.language;
   const [reason, setReason] = useState("");
   const stats = monthStats(state.shifts);
-  const otMinutes = state.shifts.reduce((acc, s) => {
+  const otMinutes = stats.shifts.reduce((acc, s) => {
     const extra = Math.max(0, shiftMinutes(s) - 8 * 60);
     return acc + extra;
   }, 0);

@@ -44,7 +44,7 @@ export default function LeaveScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{t(lang, "leave")}</Title>
-      <Muted>{t(lang, "leaveBalance")}</Muted>
+      <Muted>{t(lang, "leaveBalance")} · pending requests count against the balance</Muted>
       <View style={styles.stats}>
         <Stat label="Casual" value={String(remaining("casual"))} hint={`of ${state.leavePolicy.casual}`} />
         <Stat label="Sick" value={String(remaining("sick"))} hint={`of ${state.leavePolicy.sick}`} />

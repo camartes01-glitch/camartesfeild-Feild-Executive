@@ -20,7 +20,8 @@ function checkpoints(kind: TaskKind) {
 }
 
 export default function TaskDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: idParam } = useLocalSearchParams<{ id: string | string[] }>();
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
   const { state, live, setTaskStatus, updateTask, verifyOtp, matchSerial, sendWhatsApp, addDamage } = useApp();
   const lang = state.language;
   const [otp, setOtp] = useState("");
@@ -66,7 +67,15 @@ export default function TaskDetailScreen() {
       Alert.alert("OTP", "Customer OTP is required for handover.");
       return;
     }
-    if (current.items.length && (current.scannedSerials?.length ?? 0) < current.items.length) {
+    if (current.kind === "inventory") {
+      const missing = current.items.filter(
+        (i) => current.inventoryCounted?.[i.sku] == null || Number.isNaN(Number(current.inventoryCounted[i.sku])),
+      );
+      if (missing.length) {
+        Alert.alert("Count required", "Enter a counted qty for every SKU on this bay.");
+        return;
+      }
+    } else if (current.items.length && (current.scannedSerials?.length ?? 0) < current.items.length) {
       Alert.alert("Serials", "Match every kit serial before closing.");
       return;
     }
@@ -230,7 +239,7 @@ export default function TaskDetailScreen() {
             variant="outline"
             onPress={() => {
               if (!matchSerial(task.id, serial)) Alert.alert("No match", "Serial is not on this job sheet.");
-              setSerial("");
+              else setSerial("");
             }}
           />
         </Card>

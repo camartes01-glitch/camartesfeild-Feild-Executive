@@ -28,7 +28,7 @@ import type {
   TaskStatus,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v2";
+const KEY = "camartes-field-v3";
 
 export type LocationMode = "gps" | string;
 
@@ -81,14 +81,51 @@ const Ctx = createContext<AppContextValue | null>(null);
 
 function mergeState(parsed: Partial<AppState>): AppState {
   const base = createInitialState();
-  return { ...base, ...parsed, tasks: parsed.tasks ?? base.tasks };
+  const incoming = parsed.tasks ?? [];
+  const byId = new Map(incoming.map((t) => [t.id, t]));
+  const tasks = base.tasks.map((seed) => {
+    const saved = byId.get(seed.id);
+    if (!saved) return seed;
+    return {
+      ...seed,
+      ...saved,
+      otpCode: saved.otpCode ?? seed.otpCode,
+      items: saved.items?.length ? saved.items : seed.items,
+      photos: saved.photos ?? seed.photos,
+      timeline: saved.timeline?.length ? saved.timeline : seed.timeline,
+    };
+  });
+  for (const saved of incoming) {
+    if (!tasks.some((t) => t.id === saved.id)) tasks.push(saved);
+  }
+  return { ...base, ...parsed, tasks };
+}
+
+function geoFromSelection(locationMode: LocationMode, live: LiveFix | null) {
+  if (locationMode !== "gps") {
+    const preset = LOCATION_PRESETS.find((p) => p.id === locationMode);
+    if (preset && preset.id !== "live") {
+      return { lat: preset.lat, lng: preset.lng, accuracyM: 8 };
+    }
+  }
+  if (live) return { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM };
+  return undefined;
+}
+
+export function toWhatsAppPhone(raw: string) {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  return digits;
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(createInitialState);
   const [ready, setReady] = useState(false);
   const [online, setOnline] = useState(true);
-  const [locationMode, setLocationMode] = useState<LocationMode>("gps");
+  const [locationMode, setLocationMode] = useState<LocationMode>(() =>
+    Platform.OS === "web" ? "banjara" : "gps",
+  );
   const [live, setLive] = useState<LiveFix | null>(null);
 
   useEffect(() => {
@@ -188,13 +225,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    let cancelled = false;
     let sub: Location.LocationSubscription | undefined;
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
+      if (status !== "granted" || cancelled) return;
       sub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, timeInterval: 8000, distanceInterval: 8 },
         (pos) => {
+          if (cancelled) return;
           const fix: LiveFix = {
             lat: pos.coords.latitude,
             lng: pos.coords.longitude,
@@ -212,8 +251,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           });
         },
       );
+      if (cancelled) sub?.remove();
     })();
-    return () => sub?.remove();
+    return () => {
+      cancelled = true;
+      sub?.remove();
+    };
   }, [locationMode, ready, state.userId, openShift, persistPing]);
 
   const user = useMemo(() => USERS.find((u) => u.id === state.userId) ?? null, [state.userId]);
@@ -227,7 +270,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({
       ...s,
       userId: found.id,
-      deviceBoundId: s.deviceBoundId ?? `${found.employeeId}:${device}`,
+      deviceBoundId: `${found.employeeId}:${device}`,
     }));
     return null;
   }, []);
@@ -244,7 +287,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         /* selfie encouraged; web demo may skip */
       }
       const now = new Date();
-      const geo = live ? { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM } : undefined;
+      const geo = geoFromSelection(locationMode, live);
       let geofenceOk = true;
       if (geo) {
         const km = nearestHubKm(geo, [BANJARA.geo, HITEC.geo]);
@@ -265,13 +308,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         geofenceOverride: opts?.overrideReason,
       };
       setState((s) => ({ ...s, shifts: [...s.shifts, shift] }));
+      if (geo) {
+        setLive({
+          lat: geo.lat,
+          lng: geo.lng,
+          accuracyM: geo.accuracyM ?? 8,
+          source: locationMode === "gps" ? "gps" : "simulated",
+          at: now.toISOString(),
+        });
+      }
       queueIfOffline("Clock in");
       audit(
         `Clock in ${geofenceOk ? "inside hub geofence" : `override: ${opts?.overrideReason}`} · ${user?.employeeId}`,
       );
       return null;
     },
-    [state.shifts, live, queueIfOffline, audit, user?.employeeId],
+    [state.shifts, live, locationMode, queueIfOffline, audit, user?.employeeId],
   );
 
   const clockOut = useCallback(() => {
@@ -283,16 +335,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : {
               ...sh,
               clockOut: new Date().toISOString(),
-              clockOutGeo: live
-                ? { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM }
-                : undefined,
+              clockOutGeo: geoFromSelection(locationMode, live),
             },
       ),
     }));
     queueIfOffline("Clock out");
     audit("Clock out");
     setLive(null);
-  }, [live, queueIfOffline, audit]);
+  }, [live, locationMode, queueIfOffline, audit]);
 
   const requestOt = useCallback(() => {
     setState((s) => ({
@@ -370,7 +420,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (taskId: string, kind: "eta" | "delivered" | "collected") => {
       const task = state.tasks.find((t) => t.id === taskId);
       if (!task) return;
-      const phone = task.customerPhone.replace(/\D/g, "").replace(/^0/, "");
+      const phone = toWhatsAppPhone(task.customerPhone);
       const msg =
         kind === "eta"
           ? `Camartes: ${user?.name} (${user?.employeeId}) is about 20 min away for booking ${task.bookingRef}.`
