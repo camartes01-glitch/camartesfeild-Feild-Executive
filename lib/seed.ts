@@ -521,8 +521,8 @@ export function createInitialState(): AppState {
       },
       {
         id: "n3",
-        title: "Vendor market",
-        body: "Vendors tab now lists live businesses and freelancers from camartes.com. Visit G Anil Kumar (Hyderabad rental) and Pixel LED today.",
+        title: "Vendor onboarding beat",
+        body: "Onboard tab is your visit book — Filmfare (interested, next meet 28 Aug), Album Kraft (needs time), Pixel LED and G Anil Kumar today, CamStream not interested.",
         at: "2026-08-27T07:30:00+05:30",
         read: false,
       },
@@ -543,7 +543,35 @@ export function createInitialState(): AppState {
     ],
     leavePolicy: { casual: 6, sick: 6, earned: 12 },
     vendors: structuredClone(VENDORS),
-    vendorVisits: [],
+    vendorVisits: [
+      {
+        id: "VV-seed-1",
+        vendorId: "vn-studio-filmfare",
+        at: "2026-08-26T16:20:00+05:30",
+        outcome: "interested",
+        pitch: "Camartes marketplace — rentals, bookings, LED, WebLive",
+        note: "Ramesh wants to see a sample listing before GST paperwork.",
+        onSite: true,
+      },
+      {
+        id: "VV-seed-2",
+        vendorId: "vn-album-kraft",
+        at: "2026-08-25T12:10:00+05:30",
+        outcome: "need_time",
+        pitch: "Album Designer category on camartes.com",
+        note: "Asked for a week — partner is travelling.",
+        onSite: true,
+      },
+      {
+        id: "VV-seed-3",
+        vendorId: "vn-weblive-camstream",
+        at: "2026-08-24T17:40:00+05:30",
+        outcome: "not_interested",
+        pitch: "Web/Live Services on Camartes",
+        note: "Locked into existing vendor until December.",
+        onSite: true,
+      },
+    ],
   };
 }
 

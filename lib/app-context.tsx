@@ -17,6 +17,7 @@ import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
 import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
 import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity } from "@/lib/field-ops";
+import { interestFromOutcome, normalizeOutcome, statusFromInterest } from "@/lib/vendor-onboard";
 import type {
   AppState,
   AttemptCode,
@@ -34,11 +35,12 @@ import type {
   TaskStatus,
   Vendor,
   VendorIntel,
+  VendorKind,
   VendorVisit,
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v8";
+const KEY = "camartes-field-v9";
 
 export type LocationMode = "gps" | string;
 
@@ -95,6 +97,16 @@ type AppContextValue = {
     note: string;
     intel: VendorIntel;
     declineReason?: string;
+    nextMeetingAt?: string;
+    nextMeetingNote?: string;
+  }) => string | null;
+  addWalkInVendor: (input: {
+    name: string;
+    contact: string;
+    phone: string;
+    area: string;
+    address: string;
+    kind: VendorKind;
   }) => string | null;
   onboardVendor: (vendorId: string) => string;
   triggerSos: () => void;
@@ -765,13 +777,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       note: string;
       intel: VendorIntel;
       declineReason?: string;
+      nextMeetingAt?: string;
+      nextMeetingNote?: string;
     }) => {
       const vendor = state.vendors.find((v) => v.id === input.vendorId);
       if (!vendor) return "Vendor not found.";
-      if (input.outcome === "declined" && !input.declineReason?.trim()) {
-        return "Decline reason is mandatory.";
+      const outcome = normalizeOutcome(input.outcome);
+      if (outcome === "not_interested" && !input.declineReason?.trim()) {
+        return "Reason is mandatory when they are not interested.";
       }
-      if (input.outcome !== "courtesy") {
+      if (outcome === "need_time" || outcome === "follow_up") {
+        if (!input.nextMeetingAt?.trim()) return "Set the next meeting date when they need time or a follow-up.";
+      }
+      if (outcome !== "courtesy" && outcome !== "not_interested") {
         const missing = [
           !input.intel.gstin.trim() && "GSTIN",
           !input.intel.decisionMaker.trim() && "decision maker",
@@ -787,20 +805,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         id: `VV-${Date.now()}`,
         vendorId: input.vendorId,
         at: new Date().toISOString(),
-        outcome: input.outcome,
+        outcome,
         pitch: input.pitch,
         note: input.note,
         geo,
         onSite,
       };
-      const nextStatus: Vendor["status"] =
-        input.outcome === "onboarded"
-          ? "onboarded"
-          : input.outcome === "declined"
-            ? "declined"
-            : input.outcome === "follow_up"
-              ? "follow_up"
-              : "visited";
+      const interest = interestFromOutcome(outcome, vendor.interest);
+      const nextStatus = statusFromInterest(interest);
+      const nextMeetingAt =
+        outcome === "not_interested" || outcome === "onboarded"
+          ? input.nextMeetingAt?.trim() || undefined
+          : input.nextMeetingAt?.trim() || vendor.nextMeetingAt;
       setState((s) => ({
         ...s,
         vendorVisits: [visit, ...s.vendorVisits],
@@ -808,7 +824,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           v.id === input.vendorId
             ? {
                 ...v,
+                onboarding: true,
+                interest,
                 status: v.status === "onboarded" ? v.status : nextStatus,
+                lastVisitedAt: visit.at,
+                nextMeetingAt,
+                nextMeetingNote: input.nextMeetingNote?.trim() || v.nextMeetingNote,
                 partnerCode: v.partnerCode,
                 gstin: input.intel.gstin || v.gstin,
                 decisionMaker: input.intel.decisionMaker || v.decisionMaker,
@@ -823,18 +844,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           t.vendorId === input.vendorId && t.status !== "completed"
             ? {
                 ...t,
-                vendorOutcome: input.outcome,
+                vendorOutcome: outcome,
                 vendorIntel: input.intel,
                 declineReason: input.declineReason?.trim() || t.declineReason,
                 timeline: [
                   ...t.timeline,
-                  { id: `ev-${Date.now()}`, at: visit.at, label: `Vendor visit · ${input.outcome}` },
+                  { id: `ev-${Date.now()}`, at: visit.at, label: `Vendor visit · ${interest}` },
                 ],
               }
             : t,
         ),
       }));
-      audit(`Vendor visit ${vendor.name} · ${input.outcome}${onSite ? " · on site" : " · off site"}`);
+      audit(`Vendor visit ${vendor.name} · ${interest}${onSite ? " · on site" : " · off site"}`);
       queueIfOffline(`Vendor visit ${vendor.name}`);
       return null;
     },
@@ -850,7 +871,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         vendors: s.vendors.map((v) => {
           if (v.id !== vendorId) return v;
           assigned = v.partnerCode ?? code;
-          return { ...v, status: "onboarded" as const, partnerCode: assigned };
+          return { ...v, status: "onboarded" as const, interest: "onboarded" as const, onboarding: true, partnerCode: assigned, nextMeetingAt: undefined };
         }),
       }));
       const vendor = state.vendors.find((v) => v.id === vendorId);
@@ -858,6 +879,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return assigned;
     },
     [audit, state.vendors],
+  );
+
+  const addWalkInVendor = useCallback(
+    (input: {
+      name: string;
+      contact: string;
+      phone: string;
+      area: string;
+      address: string;
+      kind: VendorKind;
+    }) => {
+      if (!input.name.trim() || !input.contact.trim()) return null;
+      const geo = live
+        ? { lat: live.lat, lng: live.lng }
+        : { lat: 17.4126, lng: 78.4483 };
+      const vendor: Vendor = {
+        id: `vn-walkin-${Date.now()}`,
+        kind: input.kind,
+        listing: "business",
+        source: "field",
+        name: input.name.trim(),
+        contact: input.contact.trim(),
+        phone: input.phone.trim() || "—",
+        address: input.address.trim() || input.area.trim() || "Hyderabad",
+        area: input.area.trim() || "Hyderabad",
+        city: "Hyderabad",
+        geo,
+        status: "prospect",
+        interest: "to_meet",
+        onboarding: true,
+        serviceTypes: [input.kind],
+        notes: "Walk-in logged by field executive for Camartes onboarding.",
+        geoApprox: !live,
+      };
+      setState((s) => ({ ...s, vendors: [vendor, ...s.vendors] }));
+      audit(`Walk-in onboarding lead ${vendor.name}`);
+      return vendor.id;
+    },
+    [live, audit],
   );
 
   const resetDemo = useCallback(() => {
@@ -903,6 +963,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshGps,
     cityManager,
     logVendorVisit,
+    addWalkInVendor,
     onboardVendor,
     triggerSos,
     requestLeave,

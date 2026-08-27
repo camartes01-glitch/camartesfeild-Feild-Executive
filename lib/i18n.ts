@@ -45,7 +45,7 @@ const dict = {
     audit: "Audit log",
     signOut: "Sign out",
     resetDemo: "Reset demo data",
-    vendors: "Services",
+    vendors: "Onboard",
   },
   hi: {
     employeeApp: "कैमार्टेस कर्मचारी ऐप",
@@ -91,7 +91,7 @@ const dict = {
     audit: "ऑडिट लॉग",
     signOut: "साइन आउट",
     resetDemo: "डेमो रीसेट",
-    vendors: "सेवाएँ",
+    vendors: "ऑनबोर्ड",
   },
   te: {
     employeeApp: "కామార్టెస్ ఉద్యోగి యాప్",
@@ -137,7 +137,7 @@ const dict = {
     audit: "ఆడిట్ లాగ్",
     signOut: "సైన్ అవుట్",
     resetDemo: "డెమో రీసెట్",
-    vendors: "సర్వీసెస్",
+    vendors: "ఆన్‌బోర్డ్",
   },
 } as const;
 

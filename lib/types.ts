@@ -175,7 +175,23 @@ export type VendorSource = "camartes" | "field";
 
 export type VendorStatus = "prospect" | "visited" | "follow_up" | "onboarded" | "declined";
 
-export type VendorVisitOutcome = "interested" | "follow_up" | "onboarded" | "declined" | "courtesy";
+/** How the outlet responded to Camartes onboarding. `declined` is a legacy alias of not_interested. */
+export type OnboardInterest =
+  | "to_meet"
+  | "interested"
+  | "need_time"
+  | "not_interested"
+  | "follow_up"
+  | "onboarded";
+
+export type VendorVisitOutcome =
+  | "interested"
+  | "need_time"
+  | "not_interested"
+  | "follow_up"
+  | "onboarded"
+  | "courtesy"
+  | "declined";
 
 export type Vendor = {
   id: string;
@@ -190,6 +206,12 @@ export type Vendor = {
   city: string;
   geo: GeoPoint;
   status: VendorStatus;
+  /** True when this FE is working the outlet for Camartes onboarding (not a catalog listing). */
+  onboarding?: boolean;
+  interest?: OnboardInterest;
+  lastVisitedAt?: string;
+  nextMeetingAt?: string;
+  nextMeetingNote?: string;
   partnerCode?: string;
   notes: string;
   photos?: GeoPhoto[];

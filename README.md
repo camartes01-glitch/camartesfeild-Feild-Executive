@@ -13,7 +13,7 @@ Field ops in this build:
 - Failed-attempt codes (NSZ, customer unavailable, kit refused, weather, vehicle, address) and retry
 - Kit condition checklist on pickup/return (good / scuff / dent / missing)
 - POD signature plus the existing in-app handover PIN (no SMS)
-- Vendor must-ask: GST, decision maker, competitor, owned kit, next shoot; decline reason is mandatory
+- Onboard visits: interested / need time / not interested / next meeting; GST must-ask on the visit card
 - Travel vs hub vs customer vs vendor minutes from the GPS trail
 - City-manager hub map: live FEs and SLA-red jobs
 - SLA countdown on task cards
@@ -23,14 +23,14 @@ Field ops in this build:
 
 Call masking and EOD cash settlement are not in this slice.
 
-The **Services** tab uses the same vendor categories as [camartes.com Services](https://www.camartes.com): freelancer (Photographer, Videographer, Album Designer, Video Editor, Web/Live, LED Wall, Fly Cam / Drone) and business (Photography Firm, Camera Rental, Service Centres, Outdoor Studios, Editing Studios, Printing Labs, Software Services). Listings refresh from the public Camartes API when it is available.
+The **Onboard** tab is the field executive’s visit book: studios and partners they met (or are scheduled to meet) to join Camartes, with status (interested, need time, not interested, follow-up, onboarded) and the next meeting. It is not the public camartes.com catalogue.
 
 SOS calls the **city manager nearest to your live GPS**. Device GPS is requested as soon as you sign in (the shift trail still records only while you are clocked in).
 
 - Clock in with selfie and a 250 m hub geofence (override with a reason)
 - Live device GPS; shift trail only while clocked in
 - Address verification, store pickup → customer delivery, customer return → store, hub inventory
-- Services: same vendor categories as camartes.com (freelancer + business)
+- Onboard tab: outlets the field executive met or is scheduled to meet, with interested / need time / not interested / next meeting
 - In-app handover PIN (generated on device, not SMS), serial match, WhatsApp updates, damage notes, geotagged photos
 - Hours, roster, overtime, HR leave balances (casual / sick / earned)
 - Hub team map, travel expenses, kit-care training, SOS to the nearest city manager, English / Hindi / Telugu

@@ -1,63 +1,115 @@
 import { useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
-import { Button, Card, Muted, Title } from "@/components/ui";
+import { Badge, Button, Card, Field, Muted, Title } from "@/components/ui";
+import { Chip, ChipWrap } from "@/components/chips";
 import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
-import { SERVICE_TYPE_LABEL } from "@/lib/camartes-api";
-import {
-  BUSINESS_SERVICES,
-  FREELANCER_SERVICES,
-  vendorMatchesService,
-} from "@/lib/camartes-services";
 import { formatKm, haversineKm } from "@/lib/geo";
-import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
 import { t } from "@/lib/i18n";
-import type { VendorKind } from "@/lib/types";
+import {
+  INTEREST_FILTERS,
+  INTEREST_LABEL,
+  badgeTone,
+  formatMeeting,
+  isOnboardingLead,
+} from "@/lib/vendor-onboard";
+import { VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
+import type { OnboardInterest, VendorKind } from "@/lib/types";
+
+const KINDS: VendorKind[] = [
+  "photography_firm",
+  "photographer",
+  "videographer",
+  "album_designer",
+  "led_wall",
+  "web_live_services",
+  "camera_rental",
+];
 
 export default function VendorsScreen() {
-  const { state, live, refreshVendors, vendorsSync } = useApp();
+  const { state, live, addWalkInVendor } = useApp();
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
-  const [service, setService] = useState<"all" | VendorKind>("all");
+  const [filter, setFilter] = useState<"all" | OnboardInterest>("all");
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [contact, setContact] = useState("");
+  const [phone, setPhone] = useState("");
+  const [area, setArea] = useState("");
+  const [kind, setKind] = useState<VendorKind>("photography_firm");
 
-  const camartes = state.vendors.filter((v) => v.source === "camartes");
-  const businesses = camartes.filter((v) => v.listing === "business" || v.listing === "both").length;
-  const freelancers = camartes.filter((v) => v.listing === "freelancer" || v.listing === "both").length;
+  const pipeline = useMemo(
+    () => state.vendors.filter(isOnboardingLead),
+    [state.vendors],
+  );
+
+  const counts = useMemo(() => {
+    const c: Record<OnboardInterest, number> = {
+      to_meet: 0,
+      interested: 0,
+      need_time: 0,
+      not_interested: 0,
+      follow_up: 0,
+      onboarded: 0,
+    };
+    for (const v of pipeline) {
+      const i = v.interest ?? "to_meet";
+      c[i] += 1;
+    }
+    return c;
+  }, [pipeline]);
 
   const list = useMemo(() => {
-    return state.vendors
-      .filter((v) => service === "all" || vendorMatchesService(v.serviceTypes, v.kind, service))
+    return pipeline
+      .filter((v) => filter === "all" || (v.interest ?? "to_meet") === filter)
       .map((v) => ({ ...v, km: haversineKm(you, v.geo) }))
-      .sort((a, b) => a.km - b.km);
-  }, [state.vendors, service, you.lat, you.lng]);
+      .sort((a, b) => {
+        const am = a.nextMeetingAt ? new Date(a.nextMeetingAt).getTime() : Number.POSITIVE_INFINITY;
+        const bm = b.nextMeetingAt ? new Date(b.nextMeetingAt).getTime() : Number.POSITIVE_INFINITY;
+        if (am !== bm) return am - bm;
+        const al = a.lastVisitedAt ? new Date(a.lastVisitedAt).getTime() : 0;
+        const bl = b.lastVisitedAt ? new Date(b.lastVisitedAt).getTime() : 0;
+        return bl - al;
+      });
+  }, [pipeline, filter, you.lat, you.lng]);
 
-  const selectedMeta = [...FREELANCER_SERVICES, ...BUSINESS_SERVICES].find((s) => s.id === service);
+  function saveWalkIn() {
+    const id = addWalkInVendor({
+      name,
+      contact,
+      phone,
+      area,
+      address: area,
+      kind,
+    });
+    if (!id) {
+      Alert.alert("Could not add", "Name and contact are required.");
+      return;
+    }
+    setName("");
+    setContact("");
+    setPhone("");
+    setArea("");
+    setAdding(false);
+    router.push(`/(app)/vendors/${id}`);
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{t(state.language, "vendors")}</Title>
       <Muted>
-        Categories match the Services tab on camartes.com — seven freelancer services and seven business services.
+        Studios, freelancers and partners you met or are scheduled to meet to onboard them onto Camartes — not the
+        public marketplace catalogue.
       </Muted>
       <Card>
         <Text style={styles.body}>
-          {camartes.length} on Camartes · {businesses} businesses · {freelancers} freelancers
+          {pipeline.length} in your book · {counts.interested} interested · {counts.need_time} need time ·{" "}
+          {counts.not_interested} not interested
         </Text>
         <Muted>
-          {vendorsSync.loading
-            ? "Refreshing from camartes.com…"
-            : vendorsSync.live
-              ? "Synced live from camartes.com"
-              : vendorsSync.error ?? "Using saved Camartes catalog"}
+          {counts.to_meet} still to meet · {counts.follow_up} follow-up · {counts.onboarded} onboarded
         </Muted>
-        {selectedMeta ? <Muted>{selectedMeta.description}</Muted> : null}
-        <Button
-          label={vendorsSync.loading ? "Refreshing…" : "Refresh from camartes.com"}
-          variant="outline"
-          onPress={() => void refreshVendors()}
-        />
-        {vendorsSync.loading ? <ActivityIndicator color={colors.primary} /> : null}
       </Card>
       <MiniMap
         height={140}
@@ -66,64 +118,71 @@ export default function VendorsScreen() {
           ...list.slice(0, 10).map((v) => ({
             id: v.id,
             label: v.name.split(" ")[0],
-            color: v.source === "camartes" ? colors.orange : colors.ink,
+            color: (v.interest ?? "to_meet") === "not_interested" ? colors.ink : colors.orange,
             point: v.geo,
           })),
         ]}
       />
-      <Muted>Freelancers</Muted>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        <Pressable onPress={() => setService("all")} style={[styles.chip, service === "all" && styles.chipOn]}>
-          <Text style={[styles.chipTxt, service === "all" && styles.chipTxtOn]}>All</Text>
-        </Pressable>
-        {FREELANCER_SERVICES.map((f) => (
-          <Pressable
-            key={f.id}
-            onPress={() => setService(f.id)}
-            style={[styles.chip, service === f.id && styles.chipOn]}
-          >
-            <Text style={[styles.chipTxt, service === f.id && styles.chipTxtOn]}>{f.name}</Text>
-          </Pressable>
+      <ChipWrap>
+        <Chip label="All" selected={filter === "all"} onPress={() => setFilter("all")} />
+        {INTEREST_FILTERS.map((id) => (
+          <Chip
+            key={id}
+            label={`${INTEREST_LABEL[id]} (${counts[id]})`}
+            selected={filter === id}
+            tone={id === "not_interested" ? "danger" : "default"}
+            onPress={() => setFilter(id)}
+          />
         ))}
-      </ScrollView>
-      <Muted>Businesses</Muted>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        {BUSINESS_SERVICES.map((f) => (
-          <Pressable
-            key={f.id}
-            onPress={() => setService(f.id)}
-            style={[styles.chip, service === f.id && styles.chipOn]}
-          >
-            <Text style={[styles.chipTxt, service === f.id && styles.chipTxtOn]}>{f.name}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      </ChipWrap>
       {list.length === 0 ? (
         <Card>
           <Muted>
-            No vendors in this Services category yet. Log a walk-in and onboard them onto camartes.com.
+            No onboarding visits in this status. Log a walk-in after you meet an outlet, or change the filter.
           </Muted>
         </Card>
       ) : null}
-      {list.map((v) => (
-        <Pressable key={v.id} onPress={() => router.push(`/(app)/vendors/${v.id}`)}>
-          <Card>
-            <Text style={styles.body}>{v.name}</Text>
-            <Muted>
-              {LISTING_LABEL[v.listing]} · {VENDOR_KIND_LABEL[v.kind] ?? v.kind} · {v.city} · {formatKm(v.km)}
-            </Muted>
-            <Muted>
-              {v.source === "camartes" ? "Listed on camartes.com" : "Field walk-in (not on Camartes yet)"}
-              {v.kycVerified ? " · KYC" : ""}
-              {v.partnerCode ? ` · ${v.partnerCode}` : ""}
-            </Muted>
-            {v.serviceTypes?.length ? (
-              <Muted>{v.serviceTypes.map((s) => SERVICE_TYPE_LABEL[s] ?? s).join(" · ")}</Muted>
-            ) : null}
-          </Card>
-        </Pressable>
-      ))}
-      <Button label="Open market tasks" variant="ghost" onPress={() => router.push("/(app)/tasks")} />
+      {list.map((v) => {
+        const interest = v.interest ?? "to_meet";
+        const next = formatMeeting(v.nextMeetingAt);
+        const last = formatMeeting(v.lastVisitedAt);
+        return (
+          <Pressable key={v.id} onPress={() => router.push(`/(app)/vendors/${v.id}`)}>
+            <Card>
+              <View style={styles.row}>
+                <Text style={[styles.body, { flex: 1 }]}>{v.name}</Text>
+                <Badge label={INTEREST_LABEL[interest]} tone={badgeTone(interest)} />
+              </View>
+              <Muted>
+                {v.contact} · {VENDOR_KIND_LABEL[v.kind] ?? v.kind} · {v.area} · {formatKm(v.km)}
+              </Muted>
+              <Muted>
+                {next ? `Next meeting · ${next}` : "No next meeting scheduled"}
+                {v.nextMeetingNote ? ` · ${v.nextMeetingNote}` : ""}
+              </Muted>
+              {last ? <Muted>Last visit · {last}</Muted> : <Muted>Not visited yet</Muted>}
+            </Card>
+          </Pressable>
+        );
+      })}
+      {adding ? (
+        <Card>
+          <Text style={styles.body}>Log a walk-in you just met</Text>
+          <Field label="Outlet / name" value={name} onChangeText={setName} placeholder="Studio or freelancer name" />
+          <Field label="Person you met" value={contact} onChangeText={setContact} placeholder="Decision maker" />
+          <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+          <Field label="Area" value={area} onChangeText={setArea} placeholder="Banjara Hills" />
+          <ChipWrap>
+            {KINDS.map((k) => (
+              <Chip key={k} label={VENDOR_KIND_LABEL[k]} selected={kind === k} onPress={() => setKind(k)} />
+            ))}
+          </ChipWrap>
+          <Button label="Save to onboarding book" onPress={saveWalkIn} />
+          <Button label="Cancel" variant="ghost" onPress={() => setAdding(false)} />
+        </Card>
+      ) : (
+        <Button label="Add walk-in visit" variant="outline" onPress={() => setAdding(true)} />
+      )}
     </ScrollView>
   );
 }
@@ -131,13 +190,5 @@ export default function VendorsScreen() {
 const styles = StyleSheet.create({
   wrap: { padding: 16, gap: 10, backgroundColor: colors.bg, paddingBottom: 48 },
   body: { fontSize: 16, fontWeight: "800", color: colors.ink },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: colors.peach,
-  },
-  chipOn: { backgroundColor: colors.primary },
-  chipTxt: { fontWeight: "700", color: colors.ink, fontSize: 12 },
-  chipTxtOn: { color: "#fff" },
+  row: { flexDirection: "row", alignItems: "center", gap: 8 },
 });

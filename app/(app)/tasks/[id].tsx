@@ -83,15 +83,14 @@ export default function TaskDetailScreen() {
     if (current.kind === "vendor_visit") {
       const visited = state.vendorVisits.some((v) => v.vendorId === current.vendorId) || current.photos.length > 0;
       if (!visited) {
-        Alert.alert("Visit proof", "Log the vendor visit (Vendors tab) with GST / decision maker / competitor / kit / next shoot.");
+        Alert.alert("Visit proof", "Log the visit on the Onboard tab (interest + next meeting).");
         return;
       }
       const intel = current.vendorIntel;
-      if (!intel?.gstin || !intel.decisionMaker || !intel.competitor || !intel.ownedKit || !intel.nextShootDate) {
-        if (current.vendorOutcome !== "courtesy") {
-          Alert.alert("Must-ask", "Complete vendor intel on the vendor card before closing.");
-          return;
-        }
+      const skipIntel = current.vendorOutcome === "courtesy" || current.vendorOutcome === "not_interested" || current.vendorOutcome === "declined";
+      if (!skipIntel && (!intel?.gstin || !intel.decisionMaker || !intel.competitor || !intel.ownedKit || !intel.nextShootDate)) {
+        Alert.alert("Must-ask", "Complete vendor intel on the onboarding card before closing.");
+        return;
       }
     } else if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
       Alert.alert("Handover PIN", "Generate an in-app PIN and have the customer confirm it. No SMS.");

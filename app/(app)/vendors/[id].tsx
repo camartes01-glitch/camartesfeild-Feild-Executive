@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Alert, Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { Button, Card, Field, Muted, Title } from "@/components/ui";
+import { Badge, Button, Card, Field, Muted, Title } from "@/components/ui";
 import { Chip, ChipWrap } from "@/components/chips";
 import { GeoCamera } from "@/components/geo-camera";
 import { MiniMap } from "@/components/mini-map";
@@ -10,13 +10,21 @@ import { useApp, toWhatsAppPhone } from "@/lib/app-context";
 import { formatKm, haversineKm, mapsDirUrl } from "@/lib/geo";
 import { SERVICE_TYPE_LABEL } from "@/lib/camartes-api";
 import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
+import {
+  INTEREST_LABEL,
+  badgeTone,
+  formatMeeting,
+  shiftIso,
+  visitOutcomeLabel,
+} from "@/lib/vendor-onboard";
 import type { VendorVisitOutcome } from "@/lib/types";
 
 const OUTCOMES: { id: VendorVisitOutcome; label: string }[] = [
   { id: "interested", label: "Interested" },
+  { id: "need_time", label: "Need time" },
+  { id: "not_interested", label: "Not interested" },
   { id: "follow_up", label: "Follow up" },
-  { id: "onboarded", label: "Onboard to Camartes" },
-  { id: "declined", label: "Declined" },
+  { id: "onboarded", label: "Onboarded" },
   { id: "courtesy", label: "Courtesy visit" },
 ];
 
@@ -25,7 +33,7 @@ export default function VendorDetailScreen() {
   const id = Array.isArray(raw) ? raw[0] : raw;
   const { state, live, logVendorVisit, onboardVendor } = useApp();
   const vendor = state.vendors.find((v) => v.id === id);
-  const [outcome, setOutcome] = useState<VendorVisitOutcome>("interested");
+  const [outcome, setOutcome] = useState<VendorVisitOutcome>(vendor?.interest === "to_meet" ? "interested" : (vendor?.interest ?? "interested"));
   const [pitch, setPitch] = useState("Camartes marketplace — rentals, bookings, LED, WebLive");
   const [note, setNote] = useState("");
   const [gstin, setGstin] = useState(vendor?.gstin ?? "");
@@ -34,6 +42,8 @@ export default function VendorDetailScreen() {
   const [ownedKit, setOwnedKit] = useState(vendor?.ownedKit ?? "");
   const [nextShoot, setNextShoot] = useState(vendor?.nextShootDate ?? "");
   const [declineReason, setDeclineReason] = useState(vendor?.declineReason ?? "");
+  const [nextMeetingAt, setNextMeetingAt] = useState(vendor?.nextMeetingAt ?? "");
+  const [nextMeetingNote, setNextMeetingNote] = useState(vendor?.nextMeetingNote ?? "");
 
   if (!vendor) {
     return (
@@ -44,10 +54,12 @@ export default function VendorDetailScreen() {
   }
 
   const current = vendor;
-
+  const interest = vendor.interest ?? "to_meet";
   const you = live ?? vendor.geo;
   const km = haversineKm(you, vendor.geo);
   const visits = state.vendorVisits.filter((v) => v.vendorId === vendor.id);
+  const nextLabel = formatMeeting(vendor.nextMeetingAt);
+  const lastLabel = formatMeeting(vendor.lastVisitedAt);
 
   function save() {
     const err = logVendorVisit({
@@ -63,6 +75,8 @@ export default function VendorDetailScreen() {
         nextShootDate: nextShoot.trim(),
       },
       declineReason: declineReason.trim() || undefined,
+      nextMeetingAt: nextMeetingAt.trim() || undefined,
+      nextMeetingNote: nextMeetingNote.trim() || undefined,
     });
     if (err) {
       Alert.alert("Could not log visit", err);
@@ -74,11 +88,11 @@ export default function VendorDetailScreen() {
       "Visit logged",
       code
         ? `Onboarded onto Camartes as ${code}.`
-        : current.geoApprox
-          ? "Saved. Map pin is city-level until storefront GPS is captured."
+        : nextMeetingAt.trim()
+          ? `Saved. Next meeting ${formatMeeting(nextMeetingAt) ?? nextMeetingAt}.`
           : km < 0.4
             ? "On-site visit saved."
-            : "Saved (not inside 400 m of the pin).",
+            : "Visit saved.",
     );
     setNote("");
   }
@@ -86,16 +100,24 @@ export default function VendorDetailScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{vendor.name}</Title>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <Badge label={INTEREST_LABEL[interest]} tone={badgeTone(interest)} />
+        {vendor.source === "field" ? <Badge label="Walk-in" tone="peach" /> : <Badge label="camartes.com" tone="violet" />}
+      </View>
       <Muted>
         {LISTING_LABEL[vendor.listing]} · {VENDOR_KIND_LABEL[vendor.kind] ?? vendor.kind} · {vendor.area}, {vendor.city}
       </Muted>
       <Muted>
-        {vendor.source === "camartes" ? "Listed on camartes.com" : "Field walk-in"}
-        {vendor.kycVerified ? " · KYC verified" : ""}
-        {" · "}
-        {vendor.contact} · {vendor.status.replace("_", " ")}
+        {vendor.contact}
         {vendor.partnerCode ? ` · ${vendor.partnerCode}` : ""}
+        {vendor.kycVerified ? " · KYC verified" : ""}
       </Muted>
+      <Card>
+        <Text style={styles.h}>Meetings</Text>
+        <Muted>{nextLabel ? `Next · ${nextLabel}` : "No next meeting scheduled"}</Muted>
+        {vendor.nextMeetingNote ? <Muted>{vendor.nextMeetingNote}</Muted> : null}
+        <Muted>{lastLabel ? `Last visit · ${lastLabel}` : "Not visited yet"}</Muted>
+      </Card>
       {vendor.serviceTypes?.length ? (
         <Muted>{vendor.serviceTypes.map((s) => SERVICE_TYPE_LABEL[s] ?? s).join(" · ")}</Muted>
       ) : null}
@@ -107,8 +129,7 @@ export default function VendorDetailScreen() {
       />
       <Muted>
         You → vendor {formatKm(km)}
-        {vendor.geoApprox ? " · city pin (no storefront GPS on camartes.com)" : ""}
-        {live?.source === "gps" ? " · device GPS" : live ? " · simulated pin" : ""}
+        {vendor.geoApprox ? " · city pin" : ""}
       </Muted>
       <Button
         label="Navigate"
@@ -122,19 +143,12 @@ export default function VendorDetailScreen() {
           onPress={() => void Linking.openURL(`tel:${vendor.phone.replace(/\s/g, "")}`)}
         />
       ) : null}
-      {vendor.profileUrl ? (
-        <Button
-          label="Open on camartes.com"
-          variant="outline"
-          onPress={() => void Linking.openURL(vendor.profileUrl!)}
-        />
-      ) : null}
       {toWhatsAppPhone(vendor.phone).length >= 12 ? (
         <Button
-          label="WhatsApp pitch"
+          label="WhatsApp"
           variant="ghost"
           onPress={() => {
-            const msg = `Hi ${vendor.contact}, this is Camartes Field. We list photography studios, freelancers, LED walls and WebLive on camartes.com — can we onboard ${vendor.name}?`;
+            const msg = `Hi ${vendor.contact}, this is Camartes Field. Following up on onboarding ${vendor.name} onto camartes.com.`;
             void Linking.openURL(`https://wa.me/${toWhatsAppPhone(vendor.phone)}?text=${encodeURIComponent(msg)}`);
           }}
         />
@@ -145,27 +159,57 @@ export default function VendorDetailScreen() {
         <Muted>{vendor.notes}</Muted>
       </Card>
       <Card>
-        <Text style={styles.h}>Log marketing visit</Text>
+        <Text style={styles.h}>Log onboarding visit</Text>
+        <Muted>How did they respond to joining Camartes?</Muted>
         <ChipWrap>
           {OUTCOMES.map((o) => (
-            <Chip key={o.id} label={o.label} selected={outcome === o.id} tone={o.id === "declined" ? "danger" : "default"} onPress={() => setOutcome(o.id)} />
+            <Chip
+              key={o.id}
+              label={o.label}
+              selected={outcome === o.id}
+              tone={o.id === "not_interested" ? "danger" : "default"}
+              onPress={() => setOutcome(o.id)}
+            />
           ))}
         </ChipWrap>
-        <Field label="GSTIN" value={gstin} onChangeText={setGstin} placeholder="Required except courtesy visit" />
-        <Field label="Decision maker" value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Name / role" />
-        <Field label="Competitor in use" value={competitor} onChangeText={setCompetitor} placeholder="Who they rent from today" />
-        <Field label="Owned kit" value={ownedKit} onChangeText={setOwnedKit} placeholder="Bodies / lights they already own" />
-        <Field label="Next shoot date" value={nextShoot} onChangeText={setNextShoot} placeholder="YYYY-MM-DD or week" />
-        {outcome === "declined" ? (
+        {outcome === "not_interested" ? (
           <Field
-            label="Decline reason (mandatory)"
+            label="Why not interested (mandatory)"
             value={declineReason}
             onChangeText={setDeclineReason}
-            placeholder="Price / exclusive vendor / not interested…"
+            placeholder="Price / exclusive contract / already listed elsewhere…"
           />
         ) : null}
+        <Muted>Next meeting</Muted>
+        <ChipWrap>
+          <Chip label="Tomorrow 11:00" selected={nextMeetingAt === shiftIso(1)} onPress={() => setNextMeetingAt(shiftIso(1))} />
+          <Chip label="In 2 days" selected={nextMeetingAt === shiftIso(2)} onPress={() => setNextMeetingAt(shiftIso(2))} />
+          <Chip label="Next week" selected={nextMeetingAt === shiftIso(7)} onPress={() => setNextMeetingAt(shiftIso(7))} />
+          <Chip label="Clear" selected={!nextMeetingAt} onPress={() => setNextMeetingAt("")} />
+        </ChipWrap>
+        <Field
+          label="Next meeting (ISO or YYYY-MM-DDTHH:mm)"
+          value={nextMeetingAt}
+          onChangeText={setNextMeetingAt}
+          placeholder="2026-08-28T11:00:00+05:30"
+        />
+        <Field
+          label="Meeting note"
+          value={nextMeetingNote}
+          onChangeText={setNextMeetingNote}
+          placeholder="Bring listing demo / meet owner"
+        />
+        {outcome !== "courtesy" && outcome !== "not_interested" ? (
+          <>
+            <Field label="GSTIN" value={gstin} onChangeText={setGstin} placeholder="Required except courtesy / not interested" />
+            <Field label="Decision maker" value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Name / role" />
+            <Field label="Competitor in use" value={competitor} onChangeText={setCompetitor} placeholder="Who they work with today" />
+            <Field label="Owned kit" value={ownedKit} onChangeText={setOwnedKit} placeholder="Bodies / lights they already own" />
+            <Field label="Next shoot date" value={nextShoot} onChangeText={setNextShoot} placeholder="YYYY-MM-DD or week" />
+          </>
+        ) : null}
         <Field label="Pitch" value={pitch} onChangeText={setPitch} />
-        <Field label="Notes" value={note} onChangeText={setNote} placeholder="Anything extra for the city manager" />
+        <Field label="Visit notes" value={note} onChangeText={setNote} placeholder="Anything extra for the city manager" />
         <Button label="Save visit" onPress={save} />
       </Card>
       <Card>
@@ -182,7 +226,7 @@ export default function VendorDetailScreen() {
           <Text style={styles.h}>Visit history</Text>
           {visits.map((v) => (
             <Muted key={v.id}>
-              {new Date(v.at).toLocaleString()} · {v.outcome}
+              {new Date(v.at).toLocaleString()} · {visitOutcomeLabel(v.outcome)}
               {v.onSite ? " · on site" : " · off site"} · {v.note || v.pitch}
             </Muted>
           ))}
