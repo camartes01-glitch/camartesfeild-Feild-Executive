@@ -28,6 +28,7 @@ const TYPES = {
   ".svg": "image/svg+xml",
   ".woff2": "font/woff2",
   ".map": "application/json",
+  ".apk": "application/vnd.android.package-archive",
 };
 
 const ALIAS = {
@@ -122,6 +123,9 @@ const server = http.createServer((req, res) => {
       res.statusCode = 404;
       res.end("Not found");
       return;
+    }
+    if (ext === ".apk") {
+      res.setHeader("Content-Disposition", 'attachment; filename="camartes-field.apk"');
     }
     let body = data;
     if (ext === ".html") {
