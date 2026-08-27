@@ -26,6 +26,7 @@ export default function TaskDetailScreen() {
   const { state, live, setTaskStatus, updateTask, verifyOtp, generateOtp, matchSerial, sendWhatsApp, addDamage } = useApp();
   const lang = state.language;
   const [otp, setOtp] = useState("");
+  const [pinStep, setPinStep] = useState<"show" | "enter">("show");
   const [serial, setSerial] = useState("");
   const [dmg, setDmg] = useState("");
   const task = state.tasks.find((t) => t.id === id);
@@ -205,39 +206,50 @@ export default function TaskDetailScreen() {
                 Create the 4-digit PIN in this app and show it to the customer. Do not send it by SMS.
               </Muted>
               {task.otpCode && task.otpGeneratedAt ? (
-                <>
-                  <Text style={styles.pin}>{task.otpCode}</Text>
-                  <Muted>Hand the phone to the customer so they can type this PIN below.</Muted>
-                  <TextInput
-                    value={otp}
-                    onChangeText={setOtp}
-                    placeholder="Customer types PIN"
-                    keyboardType="number-pad"
-                    maxLength={4}
-                    style={styles.qty}
-                  />
-                  <Button
-                    label={t(lang, "verifyOtp")}
-                    onPress={() => {
-                      if (!verifyOtp(task.id, otp)) Alert.alert("Wrong PIN", "It must match the number on this screen.");
-                      else setOtp("");
-                    }}
-                  />
-                  <Button
-                    label="Generate new PIN"
-                    variant="outline"
-                    onPress={() => {
-                      generateOtp(task.id);
-                      setOtp("");
-                    }}
-                  />
-                </>
+                pinStep === "show" ? (
+                  <>
+                    <Text style={styles.pin}>{task.otpCode}</Text>
+                    <Muted>Show this number to the customer, then hide it before they type.</Muted>
+                    <Button label="Customer will type PIN" onPress={() => setPinStep("enter")} />
+                    <Button
+                      label="Generate new PIN"
+                      variant="outline"
+                      onPress={() => {
+                        generateOtp(task.id);
+                        setOtp("");
+                        setPinStep("show");
+                      }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Muted>PIN is hidden. Customer types the 4 digits they just saw.</Muted>
+                    <TextInput
+                      value={otp}
+                      onChangeText={setOtp}
+                      placeholder="Customer types PIN"
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      style={styles.qty}
+                      secureTextEntry
+                    />
+                    <Button
+                      label={t(lang, "verifyOtp")}
+                      onPress={() => {
+                        if (!verifyOtp(task.id, otp)) Alert.alert("Wrong PIN", "It must match the PIN that was shown.");
+                        else setOtp("");
+                      }}
+                    />
+                    <Button label="Show PIN again" variant="ghost" onPress={() => setPinStep("show")} />
+                  </>
+                )
               ) : (
                 <Button
                   label="Generate handover PIN"
                   onPress={() => {
                     generateOtp(task.id);
                     setOtp("");
+                    setPinStep("show");
                   }}
                 />
               )}

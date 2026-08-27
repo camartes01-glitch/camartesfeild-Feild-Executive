@@ -54,8 +54,12 @@ export default function HomeScreen() {
       selfieUri = shot.assets[0].uri;
     }
     const err = clockIn({ selfieUri: selfieUri ?? (Platform.OS === "web" ? "web-selfie" : undefined), overrideReason: override });
-    if (err === "geofence") setGeoError(true);
-    else setGeoError(false);
+    if (err === "geofence") {
+      setGeoError(true);
+      Alert.alert("Outside hub geofence", t(lang, "geofenceFail"));
+    } else {
+      setGeoError(false);
+    }
   }
 
   return (

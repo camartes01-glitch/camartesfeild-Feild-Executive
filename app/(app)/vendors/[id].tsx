@@ -52,7 +52,13 @@ export default function VendorDetailScreen() {
     if (outcome === "onboarded") code = onboardVendor(current.id);
     Alert.alert(
       "Visit logged",
-      code ? `Onboarded onto Camartes as ${code}.` : km < 0.4 ? "On-site visit saved." : "Saved (not inside 400 m of the studio).",
+      code
+        ? `Onboarded onto Camartes as ${code}.`
+        : current.geoApprox
+          ? "Saved. Map pin is city-level until storefront GPS is captured."
+          : km < 0.4
+            ? "On-site visit saved."
+            : "Saved (not inside 400 m of the pin).",
     );
     setNote("");
   }
@@ -61,7 +67,7 @@ export default function VendorDetailScreen() {
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{vendor.name}</Title>
       <Muted>
-        {LISTING_LABEL[vendor.listing]} · {VENDOR_KIND_LABEL[vendor.kind]} · {vendor.area}, {vendor.city}
+        {LISTING_LABEL[vendor.listing]} · {VENDOR_KIND_LABEL[vendor.kind] ?? vendor.kind} · {vendor.area}, {vendor.city}
       </Muted>
       <Muted>
         {vendor.source === "camartes" ? "Listed on camartes.com" : "Field walk-in"}
@@ -81,6 +87,7 @@ export default function VendorDetailScreen() {
       />
       <Muted>
         You → vendor {formatKm(km)}
+        {vendor.geoApprox ? " · city pin (no storefront GPS on camartes.com)" : ""}
         {live?.source === "gps" ? " · device GPS" : live ? " · simulated pin" : ""}
       </Muted>
       <Button
@@ -88,11 +95,13 @@ export default function VendorDetailScreen() {
         variant="outline"
         onPress={() => void Linking.openURL(mapsDirUrl(you, vendor.geo))}
       />
-      <Button
-        label="Call"
-        variant="ghost"
-        onPress={() => void Linking.openURL(`tel:${vendor.phone.replace(/\s/g, "")}`)}
-      />
+      {/\d{10}/.test(vendor.phone.replace(/\D/g, "")) ? (
+        <Button
+          label="Call"
+          variant="ghost"
+          onPress={() => void Linking.openURL(`tel:${vendor.phone.replace(/\s/g, "")}`)}
+        />
+      ) : null}
       {vendor.profileUrl ? (
         <Button
           label="Open on camartes.com"
@@ -100,14 +109,16 @@ export default function VendorDetailScreen() {
           onPress={() => void Linking.openURL(vendor.profileUrl!)}
         />
       ) : null}
-      <Button
-        label="WhatsApp pitch"
-        variant="ghost"
-        onPress={() => {
-          const msg = `Hi ${vendor.contact}, this is Camartes Field. We list photography studios, freelancers, LED walls and WebLive on camartes.com — can we onboard ${vendor.name}?`;
-          void Linking.openURL(`https://wa.me/${toWhatsAppPhone(vendor.phone)}?text=${encodeURIComponent(msg)}`);
-        }}
-      />
+      {toWhatsAppPhone(vendor.phone).length >= 12 ? (
+        <Button
+          label="WhatsApp pitch"
+          variant="ghost"
+          onPress={() => {
+            const msg = `Hi ${vendor.contact}, this is Camartes Field. We list photography studios, freelancers, LED walls and WebLive on camartes.com — can we onboard ${vendor.name}?`;
+            void Linking.openURL(`https://wa.me/${toWhatsAppPhone(vendor.phone)}?text=${encodeURIComponent(msg)}`);
+          }}
+        />
+      ) : null}
       <Card>
         <Text style={styles.h}>Address</Text>
         <Muted>{vendor.address}</Muted>

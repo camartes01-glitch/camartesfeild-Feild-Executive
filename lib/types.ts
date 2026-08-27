@@ -152,6 +152,8 @@ export type Vendor = {
   cameraCount?: number;
   equipmentCount?: number;
   profileUrl?: string;
+  /** True when lat/lng is a city centroid, not a storefront pin. */
+  geoApprox?: boolean;
 };
 
 export type VendorVisit = {

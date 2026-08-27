@@ -57,7 +57,7 @@ export default function AttendanceScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{t(lang, "hours")}</Title>
-      <Muted>Selfie punch · 250 m hub geofence · GPS only while on shift</Muted>
+      <Muted>Selfie punch · 250 m hub geofence · trail records only while clocked in</Muted>
       <View style={styles.stats}>
         <Stat label="Hours" value={formatDuration(stats.minutes)} />
         <Stat label="OT" value={formatDuration(otMinutes)} />

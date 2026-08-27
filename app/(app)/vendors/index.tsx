@@ -109,7 +109,7 @@ export default function VendorsScreen() {
           <Card>
             <Text style={styles.body}>{v.name}</Text>
             <Muted>
-              {LISTING_LABEL[v.listing]} · {VENDOR_KIND_LABEL[v.kind]} · {v.city} · {formatKm(v.km)}
+              {LISTING_LABEL[v.listing]} · {VENDOR_KIND_LABEL[v.kind] ?? v.kind} · {v.city} · {formatKm(v.km)}
             </Muted>
             <Muted>
               {v.source === "camartes" ? "Listed on camartes.com" : "Field walk-in (not on Camartes yet)"}

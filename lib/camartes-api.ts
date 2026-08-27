@@ -209,10 +209,10 @@ export function mapCamartesCatalog(
     if (cat === "business" && listing === "freelancer") listing = "both";
     if (cat === "freelancer" && listing === "business") listing = "both";
     const serviceTypes = normalizeServiceIds([...services]);
-    const geo =
-      store?.latitude && store?.longitude
-        ? { lat: store.latitude, lng: store.longitude }
-        : jitter(id, cityGeo(city));
+    const hasFix = !!(store?.latitude && store?.longitude);
+    const geo = hasFix
+      ? { lat: store!.latitude as number, lng: store!.longitude as number }
+      : jitter(id, cityGeo(city));
 
     vendors.push({
       id,
@@ -233,6 +233,7 @@ export function mapCamartesCatalog(
       cameraCount: store?.camera_count,
       equipmentCount: store?.total_equipment,
       profileUrl: `${CAMARTES_SITE}/provider/${id}`,
+      geoApprox: !hasFix,
     });
   }
 
@@ -258,6 +259,7 @@ export function mapCamartesCatalog(
       kycVerified: !!store.kyc_verified,
       cameraCount: store.camera_count,
       equipmentCount: store.total_equipment,
+      geoApprox: true,
     });
   }
 

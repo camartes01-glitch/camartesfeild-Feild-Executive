@@ -508,21 +508,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const generateOtp = useCallback(
     (taskId: string) => {
       const pin = generateHandoverPin();
-      updateTask(taskId, { otpCode: pin, otpGeneratedAt: new Date().toISOString(), otpVerified: false });
+      const at = new Date().toISOString();
+      setState((s) => ({
+        ...s,
+        tasks: s.tasks.map((t) =>
+          t.id === taskId ? { ...t, otpCode: pin, otpGeneratedAt: at, otpVerified: false } : t,
+        ),
+      }));
       audit(`In-app handover PIN generated on ${taskId}`);
       return pin;
     },
-    [updateTask, audit],
+    [audit],
   );
 
   const verifyOtp = useCallback((taskId: string, code: string) => {
-    const task = state.tasks.find((t) => t.id === taskId);
-    if (!task?.otpCode || !task.otpGeneratedAt) return false;
-    if (task.otpCode !== code.trim()) return false;
-    updateTask(taskId, { otpVerified: true, customerConfirmed: true });
-    audit(`In-app OTP confirmed on ${taskId}`);
-    return true;
-  }, [state.tasks, updateTask, audit]);
+    const entered = code.trim();
+    let ok = false;
+    setState((s) => {
+      const task = s.tasks.find((t) => t.id === taskId);
+      if (!task?.otpCode || !task.otpGeneratedAt || task.otpCode !== entered) return s;
+      ok = true;
+      return {
+        ...s,
+        tasks: s.tasks.map((t) =>
+          t.id === taskId ? { ...t, otpVerified: true, customerConfirmed: true } : t,
+        ),
+      };
+    });
+    if (ok) audit(`In-app OTP confirmed on ${taskId}`);
+    return ok;
+  }, [audit]);
 
   const matchSerial = useCallback((taskId: string, serial: string) => {
     const task = state.tasks.find((t) => t.id === taskId);
@@ -623,7 +638,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const vendor = state.vendors.find((v) => v.id === input.vendorId);
       if (!vendor) return "Vendor not found.";
       const geo = live ? { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM } : undefined;
-      const onSite = geo ? haversineKm(geo, vendor.geo) <= 0.4 : false;
+      const onSite = vendor.geoApprox ? false : geo ? haversineKm(geo, vendor.geo) <= 0.4 : false;
       const visit: VendorVisit = {
         id: `VV-${Date.now()}`,
         vendorId: input.vendorId,
@@ -650,8 +665,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ? {
                 ...v,
                 status: v.status === "onboarded" ? v.status : nextStatus,
-                partnerCode:
-                  input.outcome === "onboarded" ? v.partnerCode ?? `CM-VN-${String(Date.now()).slice(-4)}` : v.partnerCode,
+                partnerCode: v.partnerCode,
               }
             : v,
         ),
@@ -677,16 +691,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const onboardVendor = useCallback(
     (vendorId: string) => {
-      const code = `CM-VN-${String(Date.now()).slice(-4)}`;
+      const code = `CM-VN-${String(Date.now()).slice(-6)}`;
+      let assigned = code;
       setState((s) => ({
         ...s,
-        vendors: s.vendors.map((v) =>
-          v.id === vendorId ? { ...v, status: "onboarded" as const, partnerCode: v.partnerCode ?? code } : v,
-        ),
+        vendors: s.vendors.map((v) => {
+          if (v.id !== vendorId) return v;
+          assigned = v.partnerCode ?? code;
+          return { ...v, status: "onboarded" as const, partnerCode: assigned };
+        }),
       }));
       const vendor = state.vendors.find((v) => v.id === vendorId);
-      audit(`Onboarded ${vendor?.name ?? vendorId} as ${code}`);
-      return code;
+      audit(`Onboarded ${vendor?.name ?? vendorId} as ${assigned}`);
+      return assigned;
     },
     [audit, state.vendors],
   );
