@@ -18,7 +18,7 @@ import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
 import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
 import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity } from "@/lib/field-ops";
-import { interestFromOutcome, normalizeOutcome, statusFromInterest } from "@/lib/vendor-onboard";
+import { clampServices, interestFromOutcome, normalizeOutcome, statusFromInterest } from "@/lib/vendor-onboard";
 import type {
   AppState,
   AttemptCode,
@@ -108,7 +108,7 @@ type AppContextValue = {
       listing: VendorListing;
       serviceTypes: VendorKind[];
     };
-  }) => string | null;
+  }) => { error: string } | { partnerCode?: string };
   addWalkInVendor: (input: {
     name: string;
     contact: string;
@@ -798,16 +798,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
     }) => {
       const vendor = state.vendors.find((v) => v.id === input.vendorId);
-      if (!vendor) return "Vendor not found.";
+      if (!vendor) return { error: "Vendor not found." };
       const outcome = normalizeOutcome(input.outcome);
-      if (!input.profile.name.trim()) return "Outlet name is required.";
-      if (!input.profile.contact.trim()) return "Contact person is required.";
-      if (!input.profile.serviceTypes.length) return "Select at least one service they offer.";
+      if (!input.profile.name.trim()) return { error: "Outlet name is required." };
+      if (!input.profile.contact.trim()) return { error: "Contact person is required." };
+      const listing = input.profile.listing;
+      const serviceTypes = clampServices(listing, input.profile.serviceTypes);
+      if (!serviceTypes.length) return { error: "Select at least one service they offer." };
       if (outcome === "not_interested" && !input.declineReason?.trim()) {
-        return "Reason is mandatory when they are not interested.";
+        return { error: "Reason is mandatory when they are not interested." };
       }
       if (outcome === "need_time" || outcome === "follow_up") {
-        if (!input.nextMeetingAt?.trim()) return "Set the next meeting date when they need time or a follow-up.";
+        if (!input.nextMeetingAt?.trim()) return { error: "Set the next meeting date when they need time or a follow-up." };
       }
       if (outcome !== "courtesy" && outcome !== "not_interested") {
         const missing = [
@@ -817,7 +819,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           !input.intel.ownedKit.trim() && "owned kit",
           !input.intel.nextShootDate.trim() && "next shoot date",
         ].filter(Boolean);
-        if (missing.length) return `Must-ask incomplete: ${missing.join(", ")}.`;
+        if (missing.length) return { error: `Must-ask incomplete: ${missing.join(", ")}.` };
       }
       const geo = live ? { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM } : undefined;
       const onSite = vendor.geoApprox ? false : geo ? haversineKm(geo, vendor.geo) <= 0.4 : false;
@@ -837,9 +839,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         outcome === "not_interested" || outcome === "onboarded"
           ? input.nextMeetingAt?.trim() || undefined
           : input.nextMeetingAt?.trim() || vendor.nextMeetingAt;
-      const listing = input.profile.listing;
-      const serviceTypes = input.profile.serviceTypes;
       const kind = primaryService(serviceTypes, listing);
+      const partnerCode =
+        outcome === "onboarded" ? vendor.partnerCode ?? `CM-VN-${String(Date.now()).slice(-6)}` : vendor.partnerCode;
       setState((s) => ({
         ...s,
         vendorVisits: [visit, ...s.vendorVisits],
@@ -859,7 +861,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 lastVisitedAt: visit.at,
                 nextMeetingAt,
                 nextMeetingNote: input.nextMeetingNote?.trim() || v.nextMeetingNote,
-                partnerCode: v.partnerCode,
+                partnerCode,
                 gstin: input.intel.gstin || v.gstin,
                 decisionMaker: input.intel.decisionMaker || v.decisionMaker,
                 competitor: input.intel.competitor || v.competitor,
@@ -886,26 +888,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }));
       audit(`Vendor visit ${input.profile.name.trim()} · ${interest}${onSite ? " · on site" : " · off site"}`);
       queueIfOffline(`Vendor visit ${input.profile.name.trim()}`);
-      return null;
+      return { partnerCode: outcome === "onboarded" ? partnerCode : undefined };
     },
     [state.vendors, live, audit, queueIfOffline],
   );
 
   const onboardVendor = useCallback(
     (vendorId: string) => {
-      const code = `CM-VN-${String(Date.now()).slice(-6)}`;
-      let assigned = code;
+      const existing = state.vendors.find((v) => v.id === vendorId)?.partnerCode;
+      const code = existing ?? `CM-VN-${String(Date.now()).slice(-6)}`;
       setState((s) => ({
         ...s,
         vendors: s.vendors.map((v) => {
           if (v.id !== vendorId) return v;
-          assigned = v.partnerCode ?? code;
-          return { ...v, status: "onboarded" as const, interest: "onboarded" as const, onboarding: true, partnerCode: assigned, nextMeetingAt: undefined };
+          return {
+            ...v,
+            status: "onboarded" as const,
+            interest: "onboarded" as const,
+            onboarding: true,
+            partnerCode: v.partnerCode ?? code,
+          };
         }),
       }));
       const vendor = state.vendors.find((v) => v.id === vendorId);
-      audit(`Onboarded ${vendor?.name ?? vendorId} as ${assigned}`);
-      return assigned;
+      audit(`Onboarded ${vendor?.name ?? vendorId} as ${code}`);
+      return code;
     },
     [audit, state.vendors],
   );
@@ -921,12 +928,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       serviceTypes: VendorKind[];
     }) => {
       if (!input.name.trim() || !input.contact.trim()) return null;
-      if (!input.serviceTypes.length) return null;
+      const listing = input.listing;
+      const serviceTypes = clampServices(listing, input.serviceTypes);
+      if (!serviceTypes.length) return null;
       const geo = live
         ? { lat: live.lat, lng: live.lng }
         : { lat: 17.4126, lng: 78.4483 };
-      const listing = input.listing;
-      const serviceTypes = input.serviceTypes;
       const vendor: Vendor = {
         id: `vn-walkin-${Date.now()}`,
         kind: primaryService(serviceTypes, listing),

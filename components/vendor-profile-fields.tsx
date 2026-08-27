@@ -3,18 +3,6 @@ import { Chip, ChipWrap } from "@/components/chips";
 import { BUSINESS_SERVICES, FREELANCER_SERVICES, SERVICE_TYPE_LABEL, primaryService } from "@/lib/camartes-services";
 import type { VendorKind, VendorListing } from "@/lib/types";
 
-export function clampServices(listing: VendorListing, selected: VendorKind[]): VendorKind[] {
-  const allowed = new Set(
-    (listing === "freelancer"
-      ? FREELANCER_SERVICES
-      : listing === "business"
-        ? BUSINESS_SERVICES
-        : [...FREELANCER_SERVICES, ...BUSINESS_SERVICES]
-    ).map((s) => s.id),
-  );
-  return selected.filter((id) => allowed.has(id));
-}
-
 export function VendorProfileFields({
   name,
   contact,

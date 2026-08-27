@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Badge, Button, Card, Field, Muted, Title } from "@/components/ui";
@@ -13,11 +13,13 @@ import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
 import {
   INTEREST_LABEL,
   badgeTone,
+  clampServices,
   formatMeeting,
+  interestOf,
   shiftIso,
   visitOutcomeLabel,
 } from "@/lib/vendor-onboard";
-import { VendorProfileFields, clampServices } from "@/components/vendor-profile-fields";
+import { VendorProfileFields } from "@/components/vendor-profile-fields";
 import type { VendorKind, VendorListing, VendorVisitOutcome } from "@/lib/types";
 
 const OUTCOMES: { id: VendorVisitOutcome; label: string }[] = [
@@ -32,7 +34,7 @@ const OUTCOMES: { id: VendorVisitOutcome; label: string }[] = [
 export default function VendorDetailScreen() {
   const { id: raw } = useLocalSearchParams<{ id: string | string[] }>();
   const id = Array.isArray(raw) ? raw[0] : raw;
-  const { state, live, logVendorVisit, onboardVendor } = useApp();
+  const { state, live, logVendorVisit } = useApp();
   const vendor = state.vendors.find((v) => v.id === id);
   const [outcome, setOutcome] = useState<VendorVisitOutcome>(vendor?.interest === "to_meet" ? "interested" : (vendor?.interest ?? "interested"));
   const [pitch, setPitch] = useState("Camartes marketplace — rentals, bookings, LED, WebLive");
@@ -57,6 +59,27 @@ export default function VendorDetailScreen() {
         : [],
   );
 
+  useEffect(() => {
+    if (!vendor) return;
+    setOutletName(vendor.name);
+    setContactName(vendor.contact);
+    setContactPhone(vendor.phone === "—" ? "" : vendor.phone);
+    setListing(vendor.listing);
+    setServiceTypes(
+      vendor.serviceTypes?.length ? (vendor.serviceTypes as VendorKind[]) : vendor.kind ? [vendor.kind] : [],
+    );
+    setGstin(vendor.gstin ?? "");
+    setDecisionMaker(vendor.decisionMaker ?? "");
+    setCompetitor(vendor.competitor ?? "");
+    setOwnedKit(vendor.ownedKit ?? "");
+    setNextShoot(vendor.nextShootDate ?? "");
+    setDeclineReason(vendor.declineReason ?? "");
+    setNextMeetingAt(vendor.nextMeetingAt ?? "");
+    setNextMeetingNote(vendor.nextMeetingNote ?? "");
+    const i = interestOf(vendor);
+    setOutcome(i === "to_meet" || i === "onboarded" ? "interested" : i);
+  }, [vendor?.id]);
+
   if (!vendor) {
     return (
       <View style={styles.wrap}>
@@ -66,7 +89,7 @@ export default function VendorDetailScreen() {
   }
 
   const current = vendor;
-  const interest = vendor.interest ?? "to_meet";
+  const interest = interestOf(vendor);
   const you = live ?? vendor.geo;
   const km = haversineKm(you, vendor.geo);
   const visits = state.vendorVisits.filter((v) => v.vendorId === vendor.id);
@@ -74,7 +97,7 @@ export default function VendorDetailScreen() {
   const lastLabel = formatMeeting(vendor.lastVisitedAt);
 
   function save() {
-    const err = logVendorVisit({
+    const result = logVendorVisit({
       vendorId: current.id,
       outcome,
       pitch,
@@ -97,16 +120,14 @@ export default function VendorDetailScreen() {
         serviceTypes,
       },
     });
-    if (err) {
-      Alert.alert("Could not log visit", err);
+    if ("error" in result) {
+      Alert.alert("Could not log visit", result.error);
       return;
     }
-    let code: string | undefined;
-    if (outcome === "onboarded") code = onboardVendor(current.id);
     Alert.alert(
       "Visit logged",
-      code
-        ? `Onboarded onto Camartes as ${code}.`
+      result.partnerCode
+        ? `Onboarded onto Camartes as ${result.partnerCode}.`
         : nextMeetingAt.trim()
           ? `Saved. Next meeting ${formatMeeting(nextMeetingAt) ?? nextMeetingAt}.`
           : km < 0.4

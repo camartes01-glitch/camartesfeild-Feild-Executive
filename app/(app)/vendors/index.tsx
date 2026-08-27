@@ -12,10 +12,12 @@ import {
   INTEREST_FILTERS,
   INTEREST_LABEL,
   badgeTone,
+  clampServices,
   formatMeeting,
+  interestOf,
   isOnboardingLead,
 } from "@/lib/vendor-onboard";
-import { VendorProfileFields, clampServices } from "@/components/vendor-profile-fields";
+import { VendorProfileFields } from "@/components/vendor-profile-fields";
 import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
 import { SERVICE_TYPE_LABEL } from "@/lib/camartes-services";
 import type { OnboardInterest, VendorKind, VendorListing } from "@/lib/types";
@@ -47,7 +49,7 @@ export default function VendorsScreen() {
       onboarded: 0,
     };
     for (const v of pipeline) {
-      const i = v.interest ?? "to_meet";
+      const i = interestOf(v);
       c[i] += 1;
     }
     return c;
@@ -55,7 +57,7 @@ export default function VendorsScreen() {
 
   const list = useMemo(() => {
     return pipeline
-      .filter((v) => filter === "all" || (v.interest ?? "to_meet") === filter)
+      .filter((v) => filter === "all" || interestOf(v) === filter)
       .map((v) => ({ ...v, km: haversineKm(you, v.geo) }))
       .sort((a, b) => {
         const am = a.nextMeetingAt ? new Date(a.nextMeetingAt).getTime() : Number.POSITIVE_INFINITY;
@@ -75,7 +77,7 @@ export default function VendorsScreen() {
       area,
       address: area,
       listing,
-      serviceTypes,
+      serviceTypes: clampServices(listing, serviceTypes),
     });
     if (!id) {
       Alert.alert("Could not add", "Name, contact person, and at least one service are required.");
@@ -87,7 +89,7 @@ export default function VendorsScreen() {
     setArea("");
     setServiceTypes([]);
     setAdding(false);
-    router.push(`/(app)/vendors/${id}`);
+    setTimeout(() => router.push(`/(app)/vendors/${id}`), 0);
   }
 
   return (
@@ -113,7 +115,7 @@ export default function VendorsScreen() {
           ...list.slice(0, 10).map((v) => ({
             id: v.id,
             label: v.name.split(" ")[0],
-            color: (v.interest ?? "to_meet") === "not_interested" ? colors.ink : colors.orange,
+            color: interestOf(v) === "not_interested" ? colors.ink : colors.orange,
             point: v.geo,
           })),
         ]}
@@ -138,7 +140,7 @@ export default function VendorsScreen() {
         </Card>
       ) : null}
       {list.map((v) => {
-        const interest = v.interest ?? "to_meet";
+        const interest = interestOf(v);
         const next = formatMeeting(v.nextMeetingAt);
         const last = formatMeeting(v.lastVisitedAt);
         return (

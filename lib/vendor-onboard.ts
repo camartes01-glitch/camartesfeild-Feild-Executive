@@ -1,4 +1,4 @@
-import type { OnboardInterest, Vendor, VendorStatus, VendorVisitOutcome } from "@/lib/types";
+import type { OnboardInterest, Vendor, VendorKind, VendorListing, VendorStatus, VendorVisitOutcome } from "@/lib/types";
 
 export const INTEREST_LABEL: Record<OnboardInterest, string> = {
   to_meet: "To meet",
@@ -41,6 +41,37 @@ export function statusFromInterest(interest: OnboardInterest): VendorStatus {
   return "prospect";
 }
 
+export function interestOf(v: Pick<Vendor, "interest"> | string | undefined): OnboardInterest {
+  const raw = typeof v === "string" ? v : v?.interest;
+  if (raw && raw in INTEREST_LABEL) return raw as OnboardInterest;
+  return "to_meet";
+}
+
+export function clampServices(listing: VendorListing, selected: VendorKind[]): VendorKind[] {
+  const freelancer: VendorKind[] = [
+    "photographer",
+    "videographer",
+    "album_designer",
+    "video_editor",
+    "web_live_services",
+    "led_wall",
+    "fly_cam",
+  ];
+  const business: VendorKind[] = [
+    "photography_firm",
+    "camera_rental",
+    "service_centres",
+    "outdoor_studios",
+    "editing_studios",
+    "printing_labs",
+    "software_services",
+  ];
+  const allowed = new Set(
+    listing === "freelancer" ? freelancer : listing === "business" ? business : [...freelancer, ...business],
+  );
+  return selected.filter((id) => allowed.has(id));
+}
+
 export function isOnboardingLead(v: Vendor): boolean {
   if (v.onboarding) return true;
   if (v.source === "field") return true;
@@ -75,6 +106,7 @@ export function formatMeeting(iso?: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -83,10 +115,16 @@ export function formatMeeting(iso?: string) {
   });
 }
 
+/** Wall-clock IST, independent of the device timezone (this VM is UTC). */
 export function shiftIso(days: number, hour = 11) {
   const d = new Date();
-  d.setDate(d.getDate() + days);
-  d.setHours(hour, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00:00+05:30`;
+  d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+  const h = String(hour).padStart(2, "0");
+  return `${ymd}T${h}:00:00+05:30`;
 }
