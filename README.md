@@ -1,65 +1,44 @@
-# Camartes Field
+# Camartes Field (React Native)
 
-Field executive app for [camartes.com](https://camartes.com) staff who verify customer addresses, pick camera kits from rental hubs, deliver to customers, collect returns, and count inventory in Hyderabad.
+Field executive app for [camartes.com](https://camartes.com) staff in Hyderabad: address verification, kit pickup/delivery, returns, store inventory, live location, attendance, leave, and geotagged photos.
 
-This first slice runs in the browser (demo login, local storage). It is ready to connect to a Camartes backend later. UI colors follow camartes.com: `#FF6B35` orange on `#FFF7ED` cream.
+Brand colors: `#FF6B35` orange on `#FFF7ED` cream.
 
-## What it does
-
-- **Login / logout** — demo accounts for two field executives
-- **Live location** — device GPS, or simulated Hyderabad pins for desk testing
-- **Attendance** — clock in/out with coordinates; monthly working days and hours
-- **Leave request + planner** — calendar showing worked days vs leave
-- **Four task types**
-  1. Customer address verification
-  2. Pickup from rental store → deliver to customer
-  3. Pickup return from customer → drop at store
-  4. Inventory count at the hub
-- **Store ↔ customer distance** plus you → each stop (haversine) and Google Maps navigation
-- **Geotagged photos** — camera capture stamped with lat/lng, accuracy, time, and checkpoint; metadata stored with the task
-
-Suggested follow-on features (OTP handover, serial scan, dispatcher map, offline sync, etc.) are listed in-app under **More**.
-
-## Demo login
-
-| Email | Password | Role |
-| --- | --- | --- |
-| `rahul@camartes.com` | `field2026` | Field Executive |
-| `priya@camartes.com` | `field2026` | Field Executive |
-
-After sign-in, set **Location source** to a Hyderabad hub or customer if the browser has no GPS.
-
-## Run locally
+## Run
 
 ```bash
 npm install
-npm run dev -- --port 43147
+npx expo start
 ```
 
-Open [http://localhost:43147](http://localhost:43147).
+Then:
+
+- press `w` for web preview
+- scan the QR code with **Expo Go** on Android or iOS
+- `npx expo start --android` / `--ios` for a simulator
 
 ```bash
-npm run build
-npm start -- --port 43147
+npx expo start --web --port 43148
 ```
+
+## Demo login
+
+| Email | Password |
+| --- | --- |
+| `rahul@camartes.com` | `field2026` |
+| `priya@camartes.com` | `field2026` |
+
+If GPS is unavailable, set **Location source** on Home to a Hyderabad hub or customer pin.
+
+## Android / iOS binary
+
+```bash
+npx expo prebuild
+npx expo run:android
+```
+
+Or use [EAS Build](https://docs.expo.dev/build/setup/). This is a debug/demo app, not a Play Store release.
 
 ## Stack
 
-Next.js (App Router), TypeScript, Tailwind CSS, shadcn/ui, Leaflet / OpenStreetMap.
-
-Photos, shifts, leave and task progress persist in `localStorage` under `camartes-field-v1`.
-
-## Android APK (testing)
-
-A debug APK is built with Capacitor (`com.camartes.field`).
-
-```bash
-export ANDROID_HOME="$HOME/Android/Sdk"
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-npm run apk
-```
-
-The file is written to `android/app/build/outputs/apk/debug/app-debug.apk`. Copy it to a phone and allow install from unknown sources. This is a debug build, not a Play Store release.
-
-On first launch, allow **Location** and **Camera** when Android asks. If GPS is unavailable, use **Location source** in the app to simulate a Hyderabad pin.
-
+Expo SDK 57, Expo Router, React Native, expo-location, expo-image-picker, AsyncStorage.
