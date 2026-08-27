@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Serve the Expo static export for Cursor Preview (127.0.0.1).
- * Extensionless routes (/attendance, /hours) map to HTML files.
- * Gzip is off by default — the Preview proxy mishandles it on HEAD checks.
+ * Serve the Expo static export for Cursor CVM Preview.
+ * Bind 0.0.0.0 so the ingress proxy can reach the port (127.0.0.1-only
+ * caused 502 connection_refused). Rewrite asset URLs with the ingress token.
  */
 const http = require("http");
 const fs = require("fs");
@@ -10,7 +10,7 @@ const path = require("path");
 
 const ROOT = path.resolve(__dirname, "..", "dist");
 const PORT = Number(process.env.PORT || 43156);
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = process.env.HOST || "0.0.0.0";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -50,6 +50,29 @@ function pickFile(urlPath) {
   return path.join(ROOT, "index.html");
 }
 
+function tokenFrom(req) {
+  try {
+    const u = new URL(req.url || "/", "http://local");
+    const q = u.searchParams.get("_ingress_token");
+    if (q) return q;
+  } catch {
+    /* ignore */
+  }
+  const cookie = req.headers.cookie || "";
+  const m = cookie.match(/_ingress_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function injectAssetToken(html, token) {
+  if (!token) return html;
+  const q = `_ingress_token=${encodeURIComponent(token)}`;
+  return html.replace(/(src|href)="(\/[^"]+)"/g, (full, attr, url) => {
+    if (url.includes("_ingress_token")) return full;
+    const sep = url.includes("?") ? "&" : "?";
+    return `${attr}="${url}${sep}${q}"`;
+  });
+}
+
 const server = http.createServer((req, res) => {
   const file = pickFile(req.url || "/");
   const ext = path.extname(file).toLowerCase();
@@ -65,6 +88,11 @@ const server = http.createServer((req, res) => {
     if (err) {
       res.statusCode = 404;
       res.end("Not found");
+      return;
+    }
+    if (ext === ".html") {
+      res.statusCode = 200;
+      res.end(injectAssetToken(data.toString("utf8"), tokenFrom(req)));
       return;
     }
     res.statusCode = 200;
