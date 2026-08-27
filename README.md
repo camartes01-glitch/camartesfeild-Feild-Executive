@@ -38,6 +38,15 @@ Delivery OTP on BK-88244: **4821**. Return OTP on BK-87901: **9033**.
 
 If device GPS is unavailable, pick **Banjara Hills hub** on Home so punch-in is inside the geofence.
 
+## Android APK (local)
+
+```bash
+npx expo prebuild --platform android
+cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+```
+
+The signed APK is `android/app/build/outputs/apk/release/app-release.apk` (debug keystore). Sideload on an arm64 phone; enable “install unknown apps”.
+
 ## Stack
 
 Expo SDK 57, Expo Router, React Native, expo-location, expo-image-picker, NetInfo, AsyncStorage.
