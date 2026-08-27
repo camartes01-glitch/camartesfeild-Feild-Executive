@@ -8,10 +8,14 @@ import { useApp } from "@/lib/app-context";
 
 export default function LoginScreen() {
   const { user, ready, login, state } = useApp();
-  const [email, setEmail] = useState("rahul@camartes.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("field2026");
   const [error, setError] = useState<string | null>(null);
   const lang = state.language;
+
+  useEffect(() => {
+    setEmail("rahul@camartes.com");
+  }, []);
 
   useEffect(() => {
     if (ready && user) router.replace("/(app)");
@@ -45,7 +49,7 @@ export default function LoginScreen() {
           <Field label={t(lang, "password")} secureTextEntry value={password} onChangeText={setPassword} />
           {error ? <Text style={styles.err}>{error}</Text> : null}
           <Button label={t(lang, "signIn")} onPress={submit} />
-          <Muted>rahul@camartes.com · priya@camartes.com · arjun@camartes.com · field2026</Muted>
+          <Muted>Demo staff: rahul, priya or arjun (camartes.com) · password field2026</Muted>
         </Card>
       </ScrollView>
     </KeyboardAvoidingView>
