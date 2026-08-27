@@ -106,15 +106,22 @@ export type FieldTask = {
   vendorOutcome?: VendorVisitOutcome;
 };
 
+/** Camartes.com Services tab categories. */
 export type VendorKind =
-  | "photography_studio"
-  | "freelance_photographer"
+  | "photographer"
   | "videographer"
   | "album_designer"
   | "video_editor"
+  | "web_live_services"
   | "led_wall"
-  | "weblive"
-  | "rental_store";
+  | "fly_cam"
+  | "photography_firm"
+  | "camera_rental"
+  | "service_centres"
+  | "outdoor_studios"
+  | "editing_studios"
+  | "printing_labs"
+  | "software_services";
 
 export type VendorListing = "business" | "freelancer" | "both";
 export type VendorSource = "camartes" | "field";

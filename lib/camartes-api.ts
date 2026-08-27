@@ -1,32 +1,18 @@
-import type { GeoPoint, Vendor, VendorKind, VendorListing } from "@/lib/types";
+import type { GeoPoint, Vendor, VendorListing } from "@/lib/types";
 import snapshot from "@/lib/camartes-raw-snapshot.json";
+import {
+  CAMARTES_SERVICE_IDS,
+  SERVICE_TYPE_LABEL,
+  normalizeServiceId,
+  normalizeServiceIds,
+  primaryService,
+} from "@/lib/camartes-services";
 
+export { SERVICE_TYPE_LABEL };
 export const CAMARTES_API = "https://camartes-backend.onrender.com";
 export const CAMARTES_SITE = "https://www.camartes.com";
 
-export const SERVICE_TYPE_LABEL: Record<string, string> = {
-  photographer: "Photographer",
-  videographer: "Videographer",
-  video_editor: "Video editor",
-  photography_firm: "Photography firm",
-  outdoor_studios: "Outdoor studio",
-  indoor_studios: "Indoor studio",
-  album_designer: "Album designer",
-  led_wall: "LED wall",
-  weblive: "WebLive",
-  rental_store: "Camera rental store",
-};
-
-const SEARCH_TYPES = [
-  "photographer",
-  "videographer",
-  "video_editor",
-  "photography_firm",
-  "outdoor_studios",
-  "album_designer",
-  "led_wall",
-  "weblive",
-];
+const SEARCH_TYPES = [...CAMARTES_SERVICE_IDS];
 
 const CITY_GEO: Record<string, GeoPoint> = {
   hyderabad: { lat: 17.385, lng: 78.4867 },
@@ -128,22 +114,8 @@ function listingOf(profile: RawProfile | undefined, hasStore: boolean): VendorLi
   return "freelancer";
 }
 
-function primaryKind(services: string[], listing: VendorListing): VendorKind {
-  if (services.includes("photography_firm") || services.includes("outdoor_studios") || services.includes("indoor_studios")) {
-    return "photography_studio";
-  }
-  if (services.includes("rental_store") && !services.includes("photographer") && !services.includes("videographer")) {
-    return "rental_store";
-  }
-  if (services.includes("photographer") && listing === "freelancer") return "freelance_photographer";
-  if (services.includes("photographer")) return "freelance_photographer";
-  if (services.includes("videographer")) return "videographer";
-  if (services.includes("video_editor")) return "video_editor";
-  if (services.includes("album_designer")) return "album_designer";
-  if (services.includes("led_wall")) return "led_wall";
-  if (services.includes("weblive")) return "weblive";
-  if (services.includes("rental_store")) return "rental_store";
-  return listing === "business" ? "photography_studio" : "freelance_photographer";
+function primaryKind(services: string[], listing: VendorListing) {
+  return primaryService(services, listing);
 }
 
 function slugId(store: RawStore): string {
@@ -195,7 +167,10 @@ export function mapCamartesCatalog(
     const id = hit.user_id;
     if (!id) continue;
     if (!extraServices.has(id)) extraServices.set(id, new Set());
-    if (hit.service_type) extraServices.get(id)!.add(hit.service_type);
+    if (hit.service_type) {
+      const n = normalizeServiceId(hit.service_type) ?? hit.service_type;
+      extraServices.get(id)!.add(n);
+    }
     if (hit.service_category) extraCategory.set(id, hit.service_category);
   }
 
@@ -212,9 +187,13 @@ export function mapCamartesCatalog(
   for (const id of ids) {
     const profile = byId.get(id);
     const store = storeByUser.get(id);
-    const services = new Set<string>(Object.keys(profile?.service_profiles ?? {}));
+    const services = new Set<string>(
+      Object.keys(profile?.service_profiles ?? {})
+        .map((k) => normalizeServiceId(k) ?? k)
+        .filter(Boolean),
+    );
     for (const s of extraServices.get(id) ?? []) services.add(s);
-    if (store) services.add("rental_store");
+    if (store) services.add("camera_rental");
 
     const name = (profile?.name || profile?.full_name || store?.store_name || "").trim();
     if (!name) continue;
@@ -229,7 +208,7 @@ export function mapCamartesCatalog(
     const cat = extraCategory.get(id);
     if (cat === "business" && listing === "freelancer") listing = "both";
     if (cat === "freelancer" && listing === "business") listing = "both";
-    const serviceTypes = [...services];
+    const serviceTypes = normalizeServiceIds([...services]);
     const geo =
       store?.latitude && store?.longitude
         ? { lat: store.latitude, lng: store.longitude }
@@ -263,7 +242,7 @@ export function mapCamartesCatalog(
     const city = (store.city ?? "Hyderabad").trim();
     vendors.push({
       id,
-      kind: "rental_store",
+      kind: "camera_rental",
       listing: "business",
       source: "camartes",
       name,
@@ -274,8 +253,8 @@ export function mapCamartesCatalog(
       city,
       geo: jitter(id, cityGeo(city)),
       status: "prospect",
-      notes: buildNotes(undefined, store, ["rental_store"]),
-      serviceTypes: ["rental_store"],
+      notes: buildNotes(undefined, store, ["camera_rental"]),
+      serviceTypes: ["camera_rental"],
       kycVerified: !!store.kyc_verified,
       cameraCount: store.camera_count,
       equipmentCount: store.total_equipment,
@@ -385,6 +364,15 @@ export function overlayVendorState(fresh: Vendor[], previous: Vendor[]): Vendor[
       notes: old.notes || v.notes,
     };
   });
-  const extras = previous.filter((v) => v.source !== "camartes" && !mapped.some((m) => m.id === v.id));
+  const extras = previous
+    .filter((v) => v.source !== "camartes" && !mapped.some((m) => m.id === v.id))
+    .map((v) => {
+      const serviceTypes = normalizeServiceIds([...(v.serviceTypes ?? []), v.kind]);
+      return {
+        ...v,
+        serviceTypes,
+        kind: primaryService(serviceTypes, v.listing),
+      };
+    });
   return [...mapped, ...extras];
 }

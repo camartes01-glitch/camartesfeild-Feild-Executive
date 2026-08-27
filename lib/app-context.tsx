@@ -33,7 +33,7 @@ import type {
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v5";
+const KEY = "camartes-field-v6";
 
 export type LocationMode = "gps" | string;
 

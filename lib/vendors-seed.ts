@@ -1,16 +1,11 @@
 import { CAMARTES_VENDOR_SNAPSHOT } from "@/lib/camartes-api";
+import { SERVICE_TYPE_LABEL } from "@/lib/camartes-services";
 import type { Vendor } from "@/lib/types";
 
-export const VENDOR_KIND_LABEL: Record<Vendor["kind"], string> = {
-  photography_studio: "Photography studio",
-  freelance_photographer: "Freelance photographer",
-  videographer: "Videographer",
-  album_designer: "Album designer",
-  video_editor: "Video editor",
-  led_wall: "LED wall",
-  weblive: "WebLive / webcast",
-  rental_store: "Camera rental store",
-};
+export const VENDOR_KIND_LABEL: Record<Vendor["kind"], string> = SERVICE_TYPE_LABEL as Record<
+  Vendor["kind"],
+  string
+>;
 
 export const LISTING_LABEL: Record<Vendor["listing"], string> = {
   business: "Business",
@@ -18,11 +13,11 @@ export const LISTING_LABEL: Record<Vendor["listing"], string> = {
   both: "Business + freelancer",
 };
 
-/** Nearby walk-ins that are not yet on camartes.com (LED / WebLive / album). */
+/** Nearby walk-ins not yet listed under a camartes.com Services category. */
 export const FIELD_PROSPECTS: Vendor[] = [
   {
     id: "vn-studio-filmfare",
-    kind: "photography_studio",
+    kind: "photography_firm",
     listing: "business",
     source: "field",
     name: "Filmfare Studio",
@@ -33,12 +28,13 @@ export const FIELD_PROSPECTS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4152, lng: 78.4411 },
     status: "prospect",
-    notes: "Not listed on camartes.com yet. Wedding stills floor — pitch marketplace listing.",
+    serviceTypes: ["photography_firm", "outdoor_studios"],
+    notes: "Not listed on camartes.com yet. Pitch Photography Firm + Outdoor Studios.",
   },
   {
     id: "vn-album-kraft",
     kind: "album_designer",
-    listing: "business",
+    listing: "freelancer",
     source: "field",
     name: "Album Kraft",
     contact: "Sana Begum",
@@ -48,12 +44,13 @@ export const FIELD_PROSPECTS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4661, lng: 78.3652 },
     status: "prospect",
-    notes: "Not listed on camartes.com yet. High-end wedding albums.",
+    serviceTypes: ["album_designer"],
+    notes: "Not listed on camartes.com yet. Album Designer category.",
   },
   {
     id: "vn-led-pixel",
     kind: "led_wall",
-    listing: "business",
+    listing: "freelancer",
     source: "field",
     name: "Pixel LED Walls",
     contact: "Arun Babu",
@@ -63,12 +60,13 @@ export const FIELD_PROSPECTS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4501, lng: 78.3802 },
     status: "prospect",
-    notes: "Not listed on camartes.com yet. P3 indoor walls for sangeet.",
+    serviceTypes: ["led_wall"],
+    notes: "Not listed on camartes.com yet. LED Wall category.",
   },
   {
     id: "vn-weblive-camstream",
-    kind: "weblive",
-    listing: "business",
+    kind: "web_live_services",
+    listing: "freelancer",
     source: "field",
     name: "CamStream WebLive",
     contact: "Naveen",
@@ -78,7 +76,8 @@ export const FIELD_PROSPECTS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4399, lng: 78.4983 },
     status: "prospect",
-    notes: "Not listed on camartes.com yet. OBS + bonded LTE kits.",
+    serviceTypes: ["web_live_services"],
+    notes: "Not listed on camartes.com yet. Web/Live Services category.",
   },
 ];
 

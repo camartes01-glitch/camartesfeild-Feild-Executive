@@ -1,40 +1,25 @@
 import { useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text } from "react-native";
 import { router } from "expo-router";
 import { Button, Card, Muted, Title } from "@/components/ui";
 import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { SERVICE_TYPE_LABEL } from "@/lib/camartes-api";
+import {
+  BUSINESS_SERVICES,
+  FREELANCER_SERVICES,
+  vendorMatchesService,
+} from "@/lib/camartes-services";
 import { formatKm, haversineKm } from "@/lib/geo";
 import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
 import { t } from "@/lib/i18n";
-import type { VendorKind, VendorListing } from "@/lib/types";
-
-const KIND_FILTERS: { id: "all" | VendorKind; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "rental_store", label: "Rental" },
-  { id: "photography_studio", label: "Studio" },
-  { id: "freelance_photographer", label: "Photo" },
-  { id: "videographer", label: "Video" },
-  { id: "video_editor", label: "Editor" },
-  { id: "album_designer", label: "Album" },
-  { id: "led_wall", label: "LED" },
-  { id: "weblive", label: "WebLive" },
-];
-
-const LISTING_FILTERS: { id: "all" | VendorListing; label: string }[] = [
-  { id: "all", label: "All listings" },
-  { id: "business", label: "Business" },
-  { id: "freelancer", label: "Freelancer" },
-  { id: "both", label: "Both" },
-];
+import type { VendorKind } from "@/lib/types";
 
 export default function VendorsScreen() {
   const { state, live, refreshVendors, vendorsSync } = useApp();
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
-  const [kind, setKind] = useState<"all" | VendorKind>("all");
-  const [listing, setListing] = useState<"all" | VendorListing>("all");
+  const [service, setService] = useState<"all" | VendorKind>("all");
 
   const camartes = state.vendors.filter((v) => v.source === "camartes");
   const businesses = camartes.filter((v) => v.listing === "business" || v.listing === "both").length;
@@ -42,17 +27,18 @@ export default function VendorsScreen() {
 
   const list = useMemo(() => {
     return state.vendors
-      .filter((v) => kind === "all" || v.kind === kind)
-      .filter((v) => listing === "all" || v.listing === listing || (listing !== "both" && v.listing === "both"))
+      .filter((v) => service === "all" || vendorMatchesService(v.serviceTypes, v.kind, service))
       .map((v) => ({ ...v, km: haversineKm(you, v.geo) }))
       .sort((a, b) => a.km - b.km);
-  }, [state.vendors, kind, listing, you.lat, you.lng]);
+  }, [state.vendors, service, you.lat, you.lng]);
+
+  const selectedMeta = [...FREELANCER_SERVICES, ...BUSINESS_SERVICES].find((s) => s.id === service);
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{t(state.language, "vendors")}</Title>
       <Muted>
-        Live businesses and freelancers listed on camartes.com, plus Hyderabad walk-ins not on the platform yet.
+        Categories match the Services tab on camartes.com — seven freelancer services and seven business services.
       </Muted>
       <Card>
         <Text style={styles.body}>
@@ -65,6 +51,7 @@ export default function VendorsScreen() {
               ? "Synced live from camartes.com"
               : vendorsSync.error ?? "Using saved Camartes catalog"}
         </Muted>
+        {selectedMeta ? <Muted>{selectedMeta.description}</Muted> : null}
         <Button
           label={vendorsSync.loading ? "Refreshing…" : "Refresh from camartes.com"}
           variant="outline"
@@ -83,31 +70,38 @@ export default function VendorsScreen() {
           })),
         ]}
       />
+      <Muted>Freelancers</Muted>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        {LISTING_FILTERS.map((f) => (
+        <Pressable onPress={() => setService("all")} style={[styles.chip, service === "all" && styles.chipOn]}>
+          <Text style={[styles.chipTxt, service === "all" && styles.chipTxtOn]}>All</Text>
+        </Pressable>
+        {FREELANCER_SERVICES.map((f) => (
           <Pressable
             key={f.id}
-            onPress={() => setListing(f.id)}
-            style={[styles.chip, listing === f.id && styles.chipOn]}
+            onPress={() => setService(f.id)}
+            style={[styles.chip, service === f.id && styles.chipOn]}
           >
-            <Text style={[styles.chipTxt, listing === f.id && styles.chipTxtOn]}>{f.label}</Text>
+            <Text style={[styles.chipTxt, service === f.id && styles.chipTxtOn]}>{f.name}</Text>
           </Pressable>
         ))}
       </ScrollView>
+      <Muted>Businesses</Muted>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        {KIND_FILTERS.map((f) => (
+        {BUSINESS_SERVICES.map((f) => (
           <Pressable
             key={f.id}
-            onPress={() => setKind(f.id)}
-            style={[styles.chip, kind === f.id && styles.chipOn]}
+            onPress={() => setService(f.id)}
+            style={[styles.chip, service === f.id && styles.chipOn]}
           >
-            <Text style={[styles.chipTxt, kind === f.id && styles.chipTxtOn]}>{f.label}</Text>
+            <Text style={[styles.chipTxt, service === f.id && styles.chipTxtOn]}>{f.name}</Text>
           </Pressable>
         ))}
       </ScrollView>
       {list.length === 0 ? (
         <Card>
-          <Muted>No vendors match this filter.</Muted>
+          <Muted>
+            No vendors in this Services category yet. Log a walk-in and onboard them onto camartes.com.
+          </Muted>
         </Card>
       ) : null}
       {list.map((v) => (
