@@ -113,7 +113,11 @@ export type VendorKind =
   | "album_designer"
   | "video_editor"
   | "led_wall"
-  | "weblive";
+  | "weblive"
+  | "rental_store";
+
+export type VendorListing = "business" | "freelancer" | "both";
+export type VendorSource = "camartes" | "field";
 
 export type VendorStatus = "prospect" | "visited" | "follow_up" | "onboarded" | "declined";
 
@@ -122,6 +126,8 @@ export type VendorVisitOutcome = "interested" | "follow_up" | "onboarded" | "dec
 export type Vendor = {
   id: string;
   kind: VendorKind;
+  listing: VendorListing;
+  source: VendorSource;
   name: string;
   contact: string;
   phone: string;
@@ -133,6 +139,11 @@ export type Vendor = {
   partnerCode?: string;
   notes: string;
   photos?: GeoPhoto[];
+  serviceTypes?: string[];
+  kycVerified?: boolean;
+  cameraCount?: number;
+  equipmentCount?: number;
+  profileUrl?: string;
 };
 
 export type VendorVisit = {

@@ -12,6 +12,7 @@ import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { format } from "date-fns";
 import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, USERS } from "@/lib/seed";
+import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
 import { nearestCityManager } from "@/lib/cities";
 import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
 import type {
@@ -32,7 +33,7 @@ import type {
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v4";
+const KEY = "camartes-field-v5";
 
 export type LocationMode = "gps" | string;
 
@@ -89,6 +90,8 @@ type AppContextValue = {
   }) => void;
   resetDemo: () => void;
   audit: (label: string) => void;
+  refreshVendors: () => Promise<void>;
+  vendorsSync: { loading: boolean; live: boolean | null; at: string | null; error: string | null };
 };
 
 const Ctx = createContext<AppContextValue | null>(null);
@@ -112,7 +115,13 @@ function mergeState(parsed: Partial<AppState>): AppState {
   for (const saved of incoming) {
     if (!tasks.some((t) => t.id === saved.id)) tasks.push(saved);
   }
-  return { ...base, ...parsed, tasks, vendors: parsed.vendors?.length ? parsed.vendors : base.vendors, vendorVisits: parsed.vendorVisits ?? base.vendorVisits };
+  return {
+    ...base,
+    ...parsed,
+    tasks,
+    vendors: overlayVendorState(base.vendors, parsed.vendors ?? []),
+    vendorVisits: parsed.vendorVisits ?? base.vendorVisits,
+  };
 }
 
 function geoFromSelection(locationMode: LocationMode, live: LiveFix | null) {
@@ -141,6 +150,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [live, setLive] = useState<LiveFix | null>(null);
   const [gpsMessage, setGpsMessage] = useState<string | null>(null);
   const [gpsTick, setGpsTick] = useState(0);
+  const [vendorsSync, setVendorsSync] = useState<{
+    loading: boolean;
+    live: boolean | null;
+    at: string | null;
+    error: string | null;
+  }>({ loading: false, live: null, at: null, error: null });
 
   useEffect(() => {
     (async () => {
@@ -159,6 +174,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!ready) return;
     void AsyncStorage.setItem(KEY, JSON.stringify(state));
   }, [state, ready]);
+
+  const refreshVendors = useCallback(async () => {
+    setVendorsSync((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const result = await fetchCamartesVendors();
+      setState((s) => ({ ...s, vendors: overlayVendorState(result.vendors, s.vendors) }));
+      setVendorsSync({
+        loading: false,
+        live: result.live,
+        at: result.fetchedAt,
+        error: result.live ? null : "Showing last camartes.com snapshot (live refresh unavailable).",
+      });
+    } catch (e) {
+      setVendorsSync({
+        loading: false,
+        live: false,
+        at: null,
+        error: e instanceof Error ? e.message : "Could not refresh camartes.com",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    void refreshVendors();
+  }, [ready, refreshVendors]);
 
   useEffect(() => {
     const unsub = NetInfo.addEventListener((n) => {
@@ -678,6 +719,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestLeave,
     resetDemo,
     audit,
+    refreshVendors,
+    vendorsSync,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

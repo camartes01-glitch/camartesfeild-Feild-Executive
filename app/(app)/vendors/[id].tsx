@@ -7,7 +7,8 @@ import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
 import { useApp, toWhatsAppPhone } from "@/lib/app-context";
 import { formatKm, haversineKm, mapsDirUrl } from "@/lib/geo";
-import { VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
+import { SERVICE_TYPE_LABEL } from "@/lib/camartes-api";
+import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
 import type { VendorVisitOutcome } from "@/lib/types";
 
 const OUTCOMES: { id: VendorVisitOutcome; label: string }[] = [
@@ -60,12 +61,18 @@ export default function VendorDetailScreen() {
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{vendor.name}</Title>
       <Muted>
-        {VENDOR_KIND_LABEL[vendor.kind]} · {vendor.area}, {vendor.city}
+        {LISTING_LABEL[vendor.listing]} · {VENDOR_KIND_LABEL[vendor.kind]} · {vendor.area}, {vendor.city}
       </Muted>
       <Muted>
+        {vendor.source === "camartes" ? "Listed on camartes.com" : "Field walk-in"}
+        {vendor.kycVerified ? " · KYC verified" : ""}
+        {" · "}
         {vendor.contact} · {vendor.status.replace("_", " ")}
         {vendor.partnerCode ? ` · ${vendor.partnerCode}` : ""}
       </Muted>
+      {vendor.serviceTypes?.length ? (
+        <Muted>{vendor.serviceTypes.map((s) => SERVICE_TYPE_LABEL[s] ?? s).join(" · ")}</Muted>
+      ) : null}
       <MiniMap
         markers={[
           { id: "you", label: "You", color: colors.primary, point: you },
@@ -86,6 +93,13 @@ export default function VendorDetailScreen() {
         variant="ghost"
         onPress={() => void Linking.openURL(`tel:${vendor.phone.replace(/\s/g, "")}`)}
       />
+      {vendor.profileUrl ? (
+        <Button
+          label="Open on camartes.com"
+          variant="outline"
+          onPress={() => void Linking.openURL(vendor.profileUrl!)}
+        />
+      ) : null}
       <Button
         label="WhatsApp pitch"
         variant="ghost"

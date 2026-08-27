@@ -1,3 +1,4 @@
+import { CAMARTES_VENDOR_SNAPSHOT } from "@/lib/camartes-api";
 import type { Vendor } from "@/lib/types";
 
 export const VENDOR_KIND_LABEL: Record<Vendor["kind"], string> = {
@@ -8,12 +9,22 @@ export const VENDOR_KIND_LABEL: Record<Vendor["kind"], string> = {
   video_editor: "Video editor",
   led_wall: "LED wall",
   weblive: "WebLive / webcast",
+  rental_store: "Camera rental store",
 };
 
-export const VENDORS: Vendor[] = [
+export const LISTING_LABEL: Record<Vendor["listing"], string> = {
+  business: "Business",
+  freelancer: "Freelancer",
+  both: "Business + freelancer",
+};
+
+/** Nearby walk-ins that are not yet on camartes.com (LED / WebLive / album). */
+export const FIELD_PROSPECTS: Vendor[] = [
   {
     id: "vn-studio-filmfare",
     kind: "photography_studio",
+    listing: "business",
+    source: "field",
     name: "Filmfare Studio",
     contact: "Ramesh Iyer",
     phone: "+91 98480 22110",
@@ -22,37 +33,13 @@ export const VENDORS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4152, lng: 78.4411 },
     status: "prospect",
-    notes: "Wedding stills floor. Pitch Camartes rental + booking marketplace.",
-  },
-  {
-    id: "vn-photo-ananya",
-    kind: "freelance_photographer",
-    name: "Ananya Stills",
-    contact: "Ananya Reddy",
-    phone: "+91 90000 11821",
-    address: "Road No. 36, Jubilee Hills, Hyderabad",
-    area: "Jubilee Hills",
-    city: "Hyderabad",
-    geo: { lat: 17.4312, lng: 78.4078 },
-    status: "follow_up",
-    notes: "Shoots with rented GM glass. Offer partner rates.",
-  },
-  {
-    id: "vn-video-kiran",
-    kind: "videographer",
-    name: "Kiran Films",
-    contact: "Kiran Kumar",
-    phone: "+91 90000 11882",
-    address: "Ayyappa Society, Madhapur, Hyderabad",
-    area: "Madhapur",
-    city: "Hyderabad",
-    geo: { lat: 17.4486, lng: 78.3908 },
-    status: "visited",
-    notes: "Already a rental customer. Convert to listed vendor.",
+    notes: "Not listed on camartes.com yet. Wedding stills floor — pitch marketplace listing.",
   },
   {
     id: "vn-album-kraft",
     kind: "album_designer",
+    listing: "business",
+    source: "field",
     name: "Album Kraft",
     contact: "Sana Begum",
     phone: "+91 99122 55670",
@@ -61,24 +48,13 @@ export const VENDORS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4661, lng: 78.3652 },
     status: "prospect",
-    notes: "High-end wedding albums. Needs Camartes vendor listing.",
-  },
-  {
-    id: "vn-edit-cutgrade",
-    kind: "video_editor",
-    name: "Cut & Grade",
-    contact: "Vikram Rao",
-    phone: "+91 98765 44110",
-    address: "Prestige High Fields, Gachibowli, Hyderabad",
-    area: "Gachibowli",
-    city: "Hyderabad",
-    geo: { lat: 17.4401, lng: 78.3489 },
-    status: "prospect",
-    notes: "Post house for Telugu wedding films.",
+    notes: "Not listed on camartes.com yet. High-end wedding albums.",
   },
   {
     id: "vn-led-pixel",
     kind: "led_wall",
+    listing: "business",
+    source: "field",
     name: "Pixel LED Walls",
     contact: "Arun Babu",
     phone: "+91 98660 33421",
@@ -87,11 +63,13 @@ export const VENDORS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4501, lng: 78.3802 },
     status: "prospect",
-    notes: "P3 indoor walls for sangeet. Onboard for Camartes events.",
+    notes: "Not listed on camartes.com yet. P3 indoor walls for sangeet.",
   },
   {
     id: "vn-weblive-camstream",
     kind: "weblive",
+    listing: "business",
+    source: "field",
     name: "CamStream WebLive",
     contact: "Naveen",
     phone: "+91 90000 44130",
@@ -100,20 +78,8 @@ export const VENDORS: Vendor[] = [
     city: "Hyderabad",
     geo: { lat: 17.4399, lng: 78.4983 },
     status: "prospect",
-    notes: "OBS + bonded LTE kits. List under WebLive services.",
-  },
-  {
-    id: "vn-photo-studio-hitec",
-    kind: "photography_studio",
-    name: "North Light Loft",
-    contact: "Priya Menon",
-    phone: "+91 98490 22018",
-    address: "Image Gardens Road, Madhapur, Hyderabad",
-    area: "Madhapur",
-    city: "Hyderabad",
-    geo: { lat: 17.4522, lng: 78.3919 },
-    status: "onboarded",
-    partnerCode: "CM-VN-2201",
-    notes: "Already live on Camartes. Courtesy visit.",
+    notes: "Not listed on camartes.com yet. OBS + bonded LTE kits.",
   },
 ];
+
+export const VENDORS: Vendor[] = [...CAMARTES_VENDOR_SNAPSHOT, ...FIELD_PROSPECTS];
