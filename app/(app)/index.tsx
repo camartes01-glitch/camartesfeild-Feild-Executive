@@ -2,17 +2,23 @@ import { useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Alert } from "react-native";
 import { Href, router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { addDays, format, parseISO } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { Button, Card, Muted, Title } from "@/components/ui";
 import { CheckRow, Chip, ChipWrap } from "@/components/chips";
 import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
-import { formatKm, haversineKm, pathKm } from "@/lib/geo";
-import { formatDuration, formatWhen, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
+import { formatKm, pathKm } from "@/lib/geo";
+import { formatDuration, formatWhen, monthStats, shiftMinutes } from "@/lib/hours";
 import { LOCATION_PRESETS, ROSTER, TEAM } from "@/lib/seed";
 import { t } from "@/lib/i18n";
+import {
+  SHIFT_START_KM,
+  addYmd,
+  evaluateShiftClockIn,
+  istYmd,
+} from "@/lib/field-ops";
 import type { FieldTask } from "@/lib/types";
 
 export default function HomeScreen() {
@@ -33,8 +39,8 @@ export default function HomeScreen() {
     cityManager,
   } = useApp();
   const lang = state.language;
-  const today = localYmd();
-  const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
+  const today = istYmd();
+  const tomorrow = addYmd(today, 1);
   const openAll = [...state.tasks]
     .filter((t) => t.status !== "completed")
     .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
@@ -52,6 +58,11 @@ export default function HomeScreen() {
   const [override, setOverride] = useState("");
   const [geoError, setGeoError] = useState(false);
   const [showMap, setShowMap] = useState(false);
+  const gate = evaluateShiftClockIn({
+    geo: live,
+    tasks: state.tasks,
+    roster: ROSTER,
+  });
 
   async function doClockIn() {
     let selfieUri: string | undefined;
@@ -77,7 +88,7 @@ export default function HomeScreen() {
     }
     if (err === "geofence") {
       setGeoError(true);
-      Alert.alert("Outside hub geofence", t(lang, "geofenceFail"));
+      Alert.alert("Cannot clock in", t(lang, "geofenceFail"));
     } else {
       setGeoError(false);
     }
@@ -115,11 +126,21 @@ export default function HomeScreen() {
       <Card>
         <Text style={styles.h}>{openShift ? t(lang, "onShift") : "Punch in"}</Text>
         <Text style={styles.body}>
-          {openShift ? formatDuration(shiftMinutes(openShift)) : "Selfie · hub geofence · safety"}
+          {openShift
+            ? formatDuration(shiftMinutes(openShift))
+            : "Selfie · 5 km of first stop or roster login · safety"}
         </Text>
         {geoError ? <Muted>{t(lang, "geofenceFail")}</Muted> : null}
         {!openShift ? (
           <>
+            {!openShift && gate.firstTask ? (
+              <Muted>
+                First stop {gate.firstTask.id}
+                {gate.kmToFirst != null ? ` · ${formatKm(gate.kmToFirst)} away` : " · pick a pin or GPS"}
+                {gate.rosterWindow ? ` · roster ${gate.rosterWindow}` : ""}
+                {gate.geoOk || gate.rosterOk ? " · ready" : ` · need ≤ ${SHIFT_START_KM} km or login window`}
+              </Muted>
+            ) : null}
             <CheckRow label="Helmet on" checked={helmet} onToggle={() => setHelmet((v) => !v)} />
             <CheckRow
               label="Two-wheeler / vehicle check"
@@ -128,7 +149,7 @@ export default function HomeScreen() {
               hint="Lights, brakes, bag straps"
             />
             <TextInput
-              placeholder="Override reason if you are not at a hub"
+              placeholder="Override if you are far from first stop and outside login hours"
               value={override}
               onChangeText={setOverride}
               style={styles.input}

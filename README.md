@@ -27,7 +27,7 @@ The **Onboard** tab is the field executive’s visit book: studios and partners 
 
 SOS calls the **city manager nearest to your live GPS**. Device GPS is requested as soon as you sign in (the shift trail still records only while you are clocked in).
 
-- Clock in with selfie and a 250 m hub geofence (override with a reason)
+- Clock in with selfie: within 5 km of today’s first assigned stop, **or** during roster login hours (from 30 minutes before start through the roster window). Override with a reason if both fail. Outlet GPS check-in on a task is still 150 m.
 - Live device GPS; shift trail only while clocked in
 - Address verification, store pickup → customer delivery, customer return → store, hub inventory
 - Onboard tab: outlets the field executive met or is scheduled to meet, with interested / need time / not interested / next meeting
@@ -67,7 +67,7 @@ Password for all: `field2026`
 
 On delivery and return jobs, tap **Generate handover PIN** in the task. Show the 4-digit number to the customer and have them type it on the same phone. The PIN is created in the app — it is never sent by SMS.
 
-If device GPS is unavailable, pick **Banjara Hills hub** on Home so punch-in is inside the geofence.
+If device GPS is unavailable, pick a location pin near today’s first assigned stop (or punch in during roster login hours). Hub pins only count if they are within 5 km of that first stop.
 
 ## Android APK (local)
 

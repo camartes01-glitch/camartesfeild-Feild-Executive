@@ -11,13 +11,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { format } from "date-fns";
-import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, USERS } from "@/lib/seed";
+import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, ROSTER, USERS } from "@/lib/seed";
 import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
 import { primaryService } from "@/lib/camartes-services";
 import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
-import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
-import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity } from "@/lib/field-ops";
+import { formatKm, haversineKm } from "@/lib/geo";
+import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity, evaluateShiftClockIn } from "@/lib/field-ops";
 import { clampServices, interestFromOutcome, normalizeOutcome, statusFromInterest } from "@/lib/vendor-onboard";
 import type {
   AppState,
@@ -453,16 +453,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       const now = new Date();
       const geo = geoFromSelection(locationMode, live);
-      let geofenceOk = true;
-      if (geo) {
-        const km = nearestHubKm(geo, [BANJARA.geo, HITEC.geo]);
-        geofenceOk = km <= GEOFENCE_KM;
-      } else {
-        geofenceOk = false;
-      }
-      if (!geofenceOk && !opts?.overrideReason?.trim()) {
+      const gate = evaluateShiftClockIn({
+        geo: geo ?? null,
+        now,
+        tasks: state.tasks,
+        roster: ROSTER,
+        overrideReason: opts?.overrideReason,
+      });
+      if (!gate.allowed) {
         return "geofence";
       }
+      const geofenceOk = gate.via !== "override";
       const shift: Shift = {
         id: `sh-${now.getTime()}`,
         date: format(now, "yyyy-MM-dd"),
@@ -470,7 +471,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         clockInGeo: geo,
         selfieUri: opts?.selfieUri,
         geofenceOk,
-        geofenceOverride: opts?.overrideReason,
+        geofenceOverride: gate.via === "override" ? opts?.overrideReason : undefined,
         safetyHelmet: true,
         safetyTwoWheeler: true,
       };
@@ -485,12 +486,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
       queueIfOffline("Clock in");
-      audit(
-        `Clock in ${geofenceOk ? "inside hub geofence" : `override: ${opts?.overrideReason}`} · ${user?.employeeId}`,
-      );
+      const viaLabel =
+        gate.via === "first_task"
+          ? `within 5 km of first stop${gate.firstTask ? ` ${gate.firstTask.id}` : ""}${gate.kmToFirst != null ? ` (${formatKm(gate.kmToFirst)})` : ""}`
+          : gate.via === "roster"
+            ? `roster login ${gate.rosterWindow ?? ""}`.trim()
+            : `override: ${opts?.overrideReason}`;
+      audit(`Clock in · ${viaLabel} · ${user?.employeeId}`);
       return null;
     },
-    [state.shifts, live, locationMode, queueIfOffline, audit, user?.employeeId],
+    [state.shifts, state.tasks, live, locationMode, queueIfOffline, audit, user?.employeeId],
   );
 
   const clockOut = useCallback(() => {

@@ -26,7 +26,8 @@ const dict = {
     verifyOtp: "Confirm PIN",
     serials: "Kit serials",
     scanSerial: "Match serial",
-    geofenceFail: "You must be within 250 m of a Camartes hub to clock in, or enter a reason.",
+    geofenceFail:
+      "Clock-in needs you within 5 km of today’s first assigned stop, or during roster login hours (from 30 min before start). Otherwise enter a reason.",
     offline: "Offline — actions are queued and will sync.",
     sos: "SOS · city manager",
     expenses: "Travel expenses",
@@ -72,7 +73,8 @@ const dict = {
     verifyOtp: "पिन पुष्टि करें",
     serials: "किट सीरियल",
     scanSerial: "सीरियल मिलाएँ",
-    geofenceFail: "क्लॉक इन के लिए हब के 250 मीटर के अंदर हों, या कारण लिखें।",
+    geofenceFail:
+      "क्लॉक इन के लिए आज के पहले स्टॉप के 5 किमी के अंदर हों, या रोस्टर लॉगिन समय पर। नहीं तो कारण लिखें।",
     offline: "ऑफ़लाइन — काम कतार में है, बाद में सिंक होगा।",
     sos: "SOS · सिटी मैनेजर",
     expenses: "यात्रा खर्च",
@@ -118,7 +120,8 @@ const dict = {
     verifyOtp: "పిన్ నిర్ధారించు",
     serials: "కిట్ సీరియల్స్",
     scanSerial: "సీరియల్ సరిపోల్చు",
-    geofenceFail: "క్లాక్ ఇన్ కోసం హబ్ 250మీ లో ఉండండి, లేదా కారణం రాయండి.",
+    geofenceFail:
+      "క్లాక్ ఇన్ కోసం నేటి మొదటి స్టాప్ 5 కి.మీ లో ఉండండి, లేదా రోస్టర్ లాగిన్ సమయంలో. లేకపోతే కారణం రాయండి.",
     offline: "ఆఫ్‌లైన్ — పనులు క్యూలో ఉన్నాయి.",
     sos: "SOS · సిటీ మేనేజర్",
     expenses: "ప్రయాణ ఖర్చులు",

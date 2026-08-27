@@ -6,9 +6,9 @@ import { CheckRow, Chip, ChipWrap } from "@/components/chips";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { BANJARA, HITEC, LOCATION_PRESETS, ROSTER } from "@/lib/seed";
-import { formatDuration, formatWhen, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
-import { formatKm, GEOFENCE_KM, haversineKm, nearestHubKm } from "@/lib/geo";
-import { activityMinutes } from "@/lib/field-ops";
+import { formatDuration, formatWhen, monthStats, shiftMinutes } from "@/lib/hours";
+import { formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
+import { SHIFT_START_KM, activityMinutes, evaluateShiftClockIn, istYmd } from "@/lib/field-ops";
 import { t } from "@/lib/i18n";
 
 export default function AttendanceScreen() {
@@ -28,6 +28,12 @@ export default function AttendanceScreen() {
       ? BANJARA.name
       : HITEC.name
     : null;
+  const gate = evaluateShiftClockIn({
+    geo: live,
+    tasks: state.tasks,
+    roster: ROSTER,
+    overrideReason: reason.trim() || undefined,
+  });
 
   async function selfieThenClock() {
     let selfieUri: string | undefined;
@@ -57,9 +63,13 @@ export default function AttendanceScreen() {
       return;
     }
     if (err === "geofence") {
+      const first = gate.firstTask;
+      const dist = gate.kmToFirst != null ? formatKm(gate.kmToFirst) : "unknown distance";
       Alert.alert(
-        "Outside hub geofence",
-        `You are ${hubKm != null ? formatKm(hubKm) : "—"} from ${nearer ?? "a hub"} (limit ${GEOFENCE_KM * 1000} m). Switch to a hub pin, or enter an override reason.`,
+        "Cannot clock in",
+        first
+          ? `You are ${dist} from first stop ${first.id} (${first.customerPlace.area}). Need within ${SHIFT_START_KM} km, or roster login hours${gate.rosterWindow ? ` (${gate.rosterWindow})` : ""}. Pick a nearer pin or enter an override reason.`
+          : t(lang, "geofenceFail"),
       );
       return;
     }
@@ -70,13 +80,30 @@ export default function AttendanceScreen() {
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <Title>{t(lang, "hours")}</Title>
-      <Muted>Selfie punch · 250 m hub geofence · trail records only while clocked in</Muted>
+      <Muted>Selfie punch · 5 km of first assigned stop or roster login · trail only while clocked in</Muted>
       <View style={styles.stats}>
         <Stat label="Hours" value={formatDuration(stats.minutes)} />
         <Stat label="OT" value={formatDuration(otMinutes)} />
         <Stat label="Days" value={String(stats.days)} />
       </View>
-      {live && nearer ? (
+      {gate.firstTask ? (
+        <Card>
+          <Text style={styles.h}>First assigned stop</Text>
+          <Muted>
+            {gate.firstTask.id} · {gate.firstTask.customerPlace.area}
+            {gate.kmToFirst != null ? ` · ${formatKm(gate.kmToFirst)}` : ""}
+            {gate.geoOk ? " · within 5 km" : ` · need ≤ ${SHIFT_START_KM} km`}
+          </Muted>
+          {gate.rosterWindow ? (
+            <Muted>
+              Roster {gate.rosterWindow}
+              {gate.rosterOk ? " · login window open" : " · outside login window"}
+            </Muted>
+          ) : (
+            <Muted>No roster window for today (IST).</Muted>
+          )}
+        </Card>
+      ) : live && nearer ? (
         <Card>
           <Text style={styles.h}>Nearest hub</Text>
           <Muted>
@@ -95,14 +122,19 @@ export default function AttendanceScreen() {
           </>
         ) : (
           <>
-            <Muted>Stand at Banjara Hills or HITEC City hub, or pick that pin. Off-site needs a reason.</Muted>
+            <Muted>
+              Start within 5 km of the first assigned stop, or during roster login hours (30 min early through end of
+              window). Otherwise enter a reason.
+            </Muted>
             <ChipWrap>
-              {LOCATION_PRESETS.filter((p) => p.id === "live" || p.id === "banjara" || p.id === "hitec").map((p) => {
+              {LOCATION_PRESETS.filter((p) =>
+                p.id === "live" || p.id === "banjara" || p.id === "hitec" || p.id === "gachibowli" || p.id === "jubilee",
+              ).map((p) => {
                 const id = p.id === "live" ? "gps" : p.id;
                 return (
                   <Chip
                     key={p.id}
-                    label={p.label.replace(" Hills hub", "").replace(" City hub", "")}
+                    label={p.label.replace(" Hills hub", "").replace(" City hub", "").replace(" customer", "")}
                     selected={locationMode === id}
                     onPress={() => setLocationMode(id)}
                   />
@@ -130,7 +162,7 @@ export default function AttendanceScreen() {
         <Text style={styles.h}>Time split (GPS trail)</Text>
         <Muted>Hub · travel · customer · vendor, tagged from the shift trail.</Muted>
         {(() => {
-          const today = localYmd();
+          const today = istYmd();
           const split = activityMinutes(state.pings.filter((p) => p.at.slice(0, 10) === today || p.at.startsWith(today)));
           return (
             <View style={styles.stats}>
