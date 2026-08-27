@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui";
-import type { TaskKind, TaskStatus } from "@/lib/types";
+import { slaState } from "@/lib/field-ops";
+import type { FieldTask, TaskKind, TaskStatus } from "@/lib/types";
 
 export const KIND_LABEL: Record<TaskKind, string> = {
   address_verification: "Address verify",
@@ -31,5 +32,12 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
     completed: "Done",
     blocked: "Blocked",
   };
-  return <Badge label={labels[status]} tone={status === "completed" ? "green" : "default"} />;
+  return <Badge label={labels[status]} tone={status === "completed" ? "green" : status === "blocked" ? "red" : "default"} />;
+}
+
+export function SlaBadge({ task }: { task: FieldTask }) {
+  if (task.status === "completed") return null;
+  const sla = slaState(task);
+  const tone = sla.tone === "late" ? "red" : sla.tone === "warn" ? "peach" : "green";
+  return <Badge label={sla.label} tone={tone} />;
 }

@@ -27,6 +27,12 @@ export default function VendorDetailScreen() {
   const [outcome, setOutcome] = useState<VendorVisitOutcome>("interested");
   const [pitch, setPitch] = useState("Camartes marketplace — rentals, bookings, LED, WebLive");
   const [note, setNote] = useState("");
+  const [gstin, setGstin] = useState(vendor?.gstin ?? "");
+  const [decisionMaker, setDecisionMaker] = useState(vendor?.decisionMaker ?? "");
+  const [competitor, setCompetitor] = useState(vendor?.competitor ?? "");
+  const [ownedKit, setOwnedKit] = useState(vendor?.ownedKit ?? "");
+  const [nextShoot, setNextShoot] = useState(vendor?.nextShootDate ?? "");
+  const [declineReason, setDeclineReason] = useState(vendor?.declineReason ?? "");
 
   if (!vendor) {
     return (
@@ -43,7 +49,20 @@ export default function VendorDetailScreen() {
   const visits = state.vendorVisits.filter((v) => v.vendorId === vendor.id);
 
   function save() {
-    const err = logVendorVisit({ vendorId: current.id, outcome, pitch, note: note.trim() });
+    const err = logVendorVisit({
+      vendorId: current.id,
+      outcome,
+      pitch,
+      note: note.trim(),
+      intel: {
+        gstin: gstin.trim(),
+        decisionMaker: decisionMaker.trim(),
+        competitor: competitor.trim(),
+        ownedKit: ownedKit.trim(),
+        nextShootDate: nextShoot.trim(),
+      },
+      declineReason: declineReason.trim() || undefined,
+    });
     if (err) {
       Alert.alert("Could not log visit", err);
       return;
@@ -134,8 +153,21 @@ export default function VendorDetailScreen() {
             onPress={() => setOutcome(o.id)}
           />
         ))}
+        <Field label="GSTIN" value={gstin} onChangeText={setGstin} placeholder="Required except courtesy visit" />
+        <Field label="Decision maker" value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Name / role" />
+        <Field label="Competitor in use" value={competitor} onChangeText={setCompetitor} placeholder="Who they rent from today" />
+        <Field label="Owned kit" value={ownedKit} onChangeText={setOwnedKit} placeholder="Bodies / lights they already own" />
+        <Field label="Next shoot date" value={nextShoot} onChangeText={setNextShoot} placeholder="YYYY-MM-DD or week" />
+        {outcome === "declined" ? (
+          <Field
+            label="Decline reason (mandatory)"
+            value={declineReason}
+            onChangeText={setDeclineReason}
+            placeholder="Price / exclusive vendor / not interested…"
+          />
+        ) : null}
         <Field label="Pitch" value={pitch} onChangeText={setPitch} />
-        <Field label="Notes" value={note} onChangeText={setNote} placeholder="Decision maker, GST, next step…" />
+        <Field label="Notes" value={note} onChangeText={setNote} placeholder="Anything extra for the city manager" />
         <Button label="Save visit" onPress={save} />
       </Card>
       <Card>

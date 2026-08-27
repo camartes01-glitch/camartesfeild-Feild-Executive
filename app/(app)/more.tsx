@@ -64,6 +64,15 @@ export default function MoreScreen() {
           </Muted>
         ))}
       </Card>
+      <Card>
+        <Text style={styles.h}>Offline queue</Text>
+        {state.offlineQueue.length === 0 ? <Muted>Nothing waiting to sync.</Muted> : null}
+        {state.offlineQueue.slice(0, 8).map((q) => (
+          <Muted key={q.id}>
+            {q.synced ? "Synced" : q.retries ? `Retry ${q.retries}` : "Queued"} · {q.label}
+          </Muted>
+        ))}
+      </Card>
       <Button label={t(lang, "resetDemo")} variant="ghost" onPress={resetDemo} />
       <Button
         label={t(lang, "signOut")}

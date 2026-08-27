@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Card, Muted } from "@/components/ui";
-import { KindBadge, StatusBadge } from "@/components/task-badges";
+import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { formatKm, haversineKm } from "@/lib/geo";
@@ -25,15 +25,17 @@ export default function TasksScreen() {
   const [tab, setTab] = useState<"open" | "done">("open");
 
   const list = useMemo(() => {
-    return state.tasks.filter((t) => {
-      const open = t.status !== "completed";
-      if (tab === "open" && !open) return false;
-      if (tab === "done" && open) return false;
-      if (kind !== "all" && t.kind !== kind) return false;
-      const blob = `${t.title} ${t.customerName} ${t.bookingRef} ${t.customerPlace.area}`.toLowerCase();
-      if (q && !blob.includes(q.toLowerCase())) return false;
-      return true;
-    });
+    return state.tasks
+      .filter((t) => {
+        const open = t.status !== "completed";
+        if (tab === "open" && !open) return false;
+        if (tab === "done" && open) return false;
+        if (kind !== "all" && t.kind !== kind) return false;
+        const blob = `${t.title} ${t.customerName} ${t.bookingRef} ${t.customerPlace.area}`.toLowerCase();
+        if (q && !blob.includes(q.toLowerCase())) return false;
+        return true;
+      })
+      .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
   }, [state.tasks, q, kind, tab]);
 
   return (
@@ -83,7 +85,8 @@ export default function TasksScreen() {
                 <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
                   <KindBadge kind={t.kind} />
                   <StatusBadge status={t.status} />
-                  <Muted>{t.id}</Muted>
+                  <SlaBadge task={t} />
+                  <Muted>{t.id}{t.beatSeq ? ` · beat ${t.beatSeq}` : ""}</Muted>
                 </View>
                 <Text style={styles.body}>{t.title}</Text>
                 <Muted>
@@ -91,7 +94,8 @@ export default function TasksScreen() {
                 </Muted>
                 <Muted>
                   Store–customer {formatKm(dist)}
-                  {youDist != null ? ` · you ${formatKm(youDist)}` : ""} · {formatWhen(t.scheduledFor)}
+                  {youDist != null ? ` · you ${formatKm(youDist)}` : ""}
+                  {t.beatWindow ? ` · ${t.beatWindow}` : ` · ${formatWhen(t.scheduledFor)}`}
                 </Muted>
               </Card>
             </Pressable>

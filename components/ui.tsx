@@ -78,7 +78,7 @@ export function Badge({
   tone = "default",
 }: {
   label: string;
-  tone?: "default" | "peach" | "green" | "blue" | "violet";
+  tone?: "default" | "peach" | "green" | "blue" | "violet" | "red";
 }) {
   const bg =
     tone === "peach"
@@ -89,7 +89,9 @@ export function Badge({
           ? "#DBEAFE"
           : tone === "violet"
             ? "#EDE9FE"
-            : colors.primary;
+            : tone === "red"
+              ? "#FEE2E2"
+              : colors.primary;
   const fg =
     tone === "peach"
       ? "#EA580C"
@@ -99,7 +101,9 @@ export function Badge({
           ? "#1D4ED8"
           : tone === "violet"
             ? "#7C3AED"
-            : colors.white;
+            : tone === "red"
+              ? "#B91C1C"
+              : colors.white;
   return (
     <View style={[styles.badge, { backgroundColor: bg }]}>
       <Text style={{ color: fg, fontSize: 11, fontWeight: "700" }}>{label}</Text>

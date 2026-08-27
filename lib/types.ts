@@ -68,12 +68,48 @@ export type LeaveRequest = {
   submittedAt: string;
 };
 
+export type PingActivity = "hub" | "travel" | "customer" | "vendor" | "unknown";
+
 export type LocationPing = {
   at: string;
   lat: number;
   lng: number;
   accuracyM: number;
   source: "gps" | "simulated";
+  activity?: PingActivity;
+};
+
+export type AttemptCode =
+  | "nsz"
+  | "customer_unavailable"
+  | "kit_refused"
+  | "weather"
+  | "vehicle"
+  | "address"
+  | "other";
+
+export type TaskAttempt = {
+  at: string;
+  code: AttemptCode;
+  note: string;
+};
+
+export type KitConditionGrade = "good" | "scuff" | "dent" | "missing";
+
+export type KitCondition = {
+  overall: KitConditionGrade;
+  scuff: boolean;
+  dent: boolean;
+  missingParts: boolean;
+  notes: string;
+};
+
+export type VendorIntel = {
+  gstin: string;
+  decisionMaker: string;
+  competitor: string;
+  ownedKit: string;
+  nextShootDate: string;
 };
 
 export type FieldTask = {
@@ -105,6 +141,16 @@ export type FieldTask = {
   slaMinutes?: number;
   vendorId?: string;
   vendorOutcome?: VendorVisitOutcome;
+  beatSeq?: number;
+  beatWindow?: string;
+  attempts?: TaskAttempt[];
+  kitPickupCondition?: KitCondition;
+  kitReturnCondition?: KitCondition;
+  signatureSvg?: string;
+  declineReason?: string;
+  checkedInAt?: string;
+  checkedInGeo?: GeoPoint;
+  vendorIntel?: VendorIntel;
 };
 
 /** Camartes.com Services tab categories. */
@@ -154,6 +200,12 @@ export type Vendor = {
   profileUrl?: string;
   /** True when lat/lng is a city centroid, not a storefront pin. */
   geoApprox?: boolean;
+  gstin?: string;
+  decisionMaker?: string;
+  competitor?: string;
+  ownedKit?: string;
+  nextShootDate?: string;
+  declineReason?: string;
 };
 
 export type VendorVisit = {
@@ -195,6 +247,8 @@ export type OfflineItem = {
   at: string;
   label: string;
   synced: boolean;
+  retries?: number;
+  lastRetryAt?: string;
 };
 
 export type AppNotice = {
@@ -232,6 +286,8 @@ export type Shift = {
   geofenceOk?: boolean;
   geofenceOverride?: string;
   otRequested?: boolean;
+  safetyHelmet?: boolean;
+  safetyTwoWheeler?: boolean;
 };
 
 export type LeavePolicy = {

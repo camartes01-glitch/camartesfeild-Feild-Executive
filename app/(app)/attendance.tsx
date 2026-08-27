@@ -1,18 +1,21 @@
 import { useState } from "react";
-import { Alert, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Button, Card, Field, Muted, Title } from "@/components/ui";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { BANJARA, HITEC, LOCATION_PRESETS, ROSTER } from "@/lib/seed";
-import { formatDuration, formatWhen, monthStats, shiftMinutes } from "@/lib/hours";
+import { formatDuration, formatWhen, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
 import { formatKm, GEOFENCE_KM, haversineKm, nearestHubKm } from "@/lib/geo";
+import { activityMinutes } from "@/lib/field-ops";
 import { t } from "@/lib/i18n";
 
 export default function AttendanceScreen() {
   const { state, live, clockIn, clockOut, requestOt, openShift, locationMode, setLocationMode } = useApp();
   const lang = state.language;
   const [reason, setReason] = useState("");
+  const [helmet, setHelmet] = useState(false);
+  const [twoWheeler, setTwoWheeler] = useState(false);
   const stats = monthStats(state.shifts);
   const otMinutes = stats.shifts.reduce((acc, s) => {
     const extra = Math.max(0, shiftMinutes(s) - 8 * 60);
@@ -42,7 +45,16 @@ export default function AttendanceScreen() {
     } else {
       selfieUri = "web-selfie";
     }
-    const err = clockIn({ selfieUri, overrideReason: reason.trim() || undefined });
+    const err = clockIn({
+      selfieUri,
+      overrideReason: reason.trim() || undefined,
+      safetyHelmet: helmet,
+      safetyTwoWheeler: twoWheeler,
+    });
+    if (err === "safety") {
+      Alert.alert("Safety checklist", "Tick helmet and two-wheeler / vehicle check before punch-in.");
+      return;
+    }
     if (err === "geofence") {
       Alert.alert(
         "Outside hub geofence",
@@ -96,6 +108,12 @@ export default function AttendanceScreen() {
                 );
               })}
             </ScrollView>
+            <Pressable onPress={() => setHelmet((v) => !v)} style={[styles.check, helmet && styles.checkOn]}>
+              <Text style={helmet ? styles.checkTxtOn : styles.checkTxt}>Helmet on</Text>
+            </Pressable>
+            <Pressable onPress={() => setTwoWheeler((v) => !v)} style={[styles.check, twoWheeler && styles.checkOn]}>
+              <Text style={twoWheeler ? styles.checkTxtOn : styles.checkTxt}>Two-wheeler / vehicle check</Text>
+            </Pressable>
             <Field
               label="Override reason"
               value={reason}
@@ -105,6 +123,22 @@ export default function AttendanceScreen() {
             <Button label="Selfie punch-in" onPress={() => void selfieThenClock()} />
           </>
         )}
+      </Card>
+      <Card>
+        <Text style={styles.h}>Time split (GPS trail)</Text>
+        <Muted>Hub · travel · customer · vendor, tagged from the shift trail.</Muted>
+        {(() => {
+          const today = localYmd();
+          const split = activityMinutes(state.pings.filter((p) => p.at.slice(0, 10) === today || p.at.startsWith(today)));
+          return (
+            <View style={styles.stats}>
+              <Stat label="Hub" value={formatDuration(split.hub)} />
+              <Stat label="Travel" value={formatDuration(split.travel)} />
+              <Stat label="Customer" value={formatDuration(split.customer)} />
+              <Stat label="Vendor" value={formatDuration(split.vendor)} />
+            </View>
+          );
+        })()}
       </Card>
       <Text style={styles.h}>Roster</Text>
       {ROSTER.map((r) => (
@@ -153,4 +187,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.peachBorder,
   },
+  check: {
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: colors.cream,
+  },
+  checkOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkTxt: { fontWeight: "700", color: colors.ink },
+  checkTxtOn: { fontWeight: "700", color: "#fff" },
 });

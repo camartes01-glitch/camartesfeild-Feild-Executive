@@ -4,13 +4,15 @@ import { useLocalSearchParams, router } from "expo-router";
 import { Button, Card, Muted } from "@/components/ui";
 import { GeoCamera } from "@/components/geo-camera";
 import { MiniMap } from "@/components/mini-map";
-import { KindBadge, StatusBadge } from "@/components/task-badges";
+import { SignaturePad } from "@/components/signature-pad";
+import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
+import { ATTEMPT_LABELS, CHECK_IN_KM, KIT_GRADES, checkInTarget } from "@/lib/field-ops";
 import { formatCoord, formatKm, haversineKm, mapsDirUrl } from "@/lib/geo";
 import { formatWhen } from "@/lib/hours";
 import { t } from "@/lib/i18n";
-import type { TaskKind } from "@/lib/types";
+import type { AttemptCode, KitCondition, KitConditionGrade, TaskKind } from "@/lib/types";
 
 function checkpoints(kind: TaskKind) {
   if (kind === "address_verification") return ["Address / nameplate"];
@@ -23,12 +25,20 @@ function checkpoints(kind: TaskKind) {
 export default function TaskDetailScreen() {
   const { id: idParam } = useLocalSearchParams<{ id: string | string[] }>();
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const { state, live, setTaskStatus, updateTask, verifyOtp, generateOtp, matchSerial, sendWhatsApp, addDamage } = useApp();
+  const { state, live, setTaskStatus, updateTask, verifyOtp, generateOtp, matchSerial, sendWhatsApp, addDamage, checkInTask, logAttempt, saveKitCondition, saveSignature } =
+    useApp();
   const lang = state.language;
   const [otp, setOtp] = useState("");
   const [pinStep, setPinStep] = useState<"show" | "enter">("show");
   const [serial, setSerial] = useState("");
   const [dmg, setDmg] = useState("");
+  const [attemptCode, setAttemptCode] = useState<AttemptCode>("customer_unavailable");
+  const [attemptNote, setAttemptNote] = useState("");
+  const [kitGrade, setKitGrade] = useState<KitConditionGrade>("good");
+  const [kitScuff, setKitScuff] = useState(false);
+  const [kitDent, setKitDent] = useState(false);
+  const [kitMissing, setKitMissing] = useState(false);
+  const [kitNotes, setKitNotes] = useState("");
   const task = state.tasks.find((t) => t.id === id);
 
   if (!task) {
@@ -61,6 +71,10 @@ export default function TaskDetailScreen() {
       Alert.alert("Photos needed", `Add geotagged photos first: ${missing.join(", ")}`);
       return;
     }
+    if (!current.checkedInAt) {
+      Alert.alert("GPS check-in", `Check in within ${Math.round(CHECK_IN_KM * 1000)} m of the stop (live GPS).`);
+      return;
+    }
     if (current.kind === "address_verification" && current.addressMatch === "unverified") {
       Alert.alert("Address result", "Mark whether the site matches the booking.");
       return;
@@ -68,11 +82,30 @@ export default function TaskDetailScreen() {
     if (current.kind === "vendor_visit") {
       const visited = state.vendorVisits.some((v) => v.vendorId === current.vendorId) || current.photos.length > 0;
       if (!visited) {
-        Alert.alert("Visit proof", "Log the vendor visit (Vendors tab) or capture a storefront photo.");
+        Alert.alert("Visit proof", "Log the vendor visit (Vendors tab) with GST / decision maker / competitor / kit / next shoot.");
         return;
+      }
+      const intel = current.vendorIntel;
+      if (!intel?.gstin || !intel.decisionMaker || !intel.competitor || !intel.ownedKit || !intel.nextShootDate) {
+        if (current.vendorOutcome !== "courtesy") {
+          Alert.alert("Must-ask", "Complete vendor intel on the vendor card before closing.");
+          return;
+        }
       }
     } else if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
       Alert.alert("Handover PIN", "Generate an in-app PIN and have the customer confirm it. No SMS.");
+      return;
+    }
+    if ((current.kind === "delivery" || current.kind === "return") && !current.signatureSvg) {
+      Alert.alert("Signature", "Capture a POD signature on this screen.");
+      return;
+    }
+    if (current.kind === "delivery" && !current.kitPickupCondition) {
+      Alert.alert("Kit condition", "Log pickup condition (good / scuff / dent / missing).");
+      return;
+    }
+    if (current.kind === "return" && !current.kitReturnCondition) {
+      Alert.alert("Kit condition", "Log return condition before closing.");
       return;
     }
     if (current.kind === "inventory") {
@@ -96,10 +129,13 @@ export default function TaskDetailScreen() {
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
         <KindBadge kind={task.kind} />
         <StatusBadge status={task.status} />
+        <SlaBadge task={task} />
       </View>
       <Text style={styles.title}>{task.title}</Text>
       <Muted>
-        {task.bookingRef} · due {formatWhen(task.scheduledFor)}
+        {task.bookingRef}
+        {task.beatSeq ? ` · beat ${task.beatSeq}` : ""}
+        {task.beatWindow ? ` · ${task.beatWindow}` : ""} · due {formatWhen(task.scheduledFor)}
       </Muted>
 
       <MiniMap
@@ -121,6 +157,116 @@ export default function TaskDetailScreen() {
           onPress={() => void Linking.openURL(mapsDirUrl(you, nextLeg.place.geo))}
         />
       </Card>
+
+      <Card>
+        <Text style={styles.h}>Outlet GPS check-in</Text>
+        <Muted>
+          Live GPS at the stop — not the storefront photo. Stay within {Math.round(CHECK_IN_KM * 1000)} m of{" "}
+          {task.kind === "delivery" && task.status === "assigned" ? task.store.area : task.customerPlace.area}.
+        </Muted>
+        {task.checkedInAt ? (
+          <Muted>
+            Checked in {formatWhen(task.checkedInAt)}
+            {task.checkedInGeo
+              ? ` · ${formatCoord(task.checkedInGeo.lat)} , ${formatCoord(task.checkedInGeo.lng)}`
+              : ""}
+          </Muted>
+        ) : (
+          <Button
+            label="Check in with GPS"
+            onPress={() => {
+              const err = checkInTask(task.id);
+              if (err) Alert.alert("Check-in blocked", err);
+            }}
+          />
+        )}
+        {live ? (
+          <Muted>
+            You are {formatKm(haversineKm(live, checkInTarget(task)))} from the stop
+            {live.source === "gps" ? " · device GPS" : " · simulated pin"}
+          </Muted>
+        ) : (
+          <Muted>Waiting for a GPS fix. Pick a customer pin on Home if you are demoing.</Muted>
+        )}
+      </Card>
+
+      {task.kind === "delivery" || task.kind === "return" ? (
+        <Card>
+          <Text style={styles.h}>{task.kind === "delivery" ? "Kit condition · pickup" : "Kit condition · return"}</Text>
+          <Muted>Good / scuff / dent / missing parts before the bag leaves or returns.</Muted>
+          {KIT_GRADES.map((g) => (
+            <Button
+              key={g.id}
+              label={g.label}
+              variant={kitGrade === g.id ? "primary" : "outline"}
+              onPress={() => setKitGrade(g.id)}
+            />
+          ))}
+          <Button label={kitScuff ? "Scuff noted" : "Mark scuff"} variant={kitScuff ? "primary" : "ghost"} onPress={() => setKitScuff((v) => !v)} />
+          <Button label={kitDent ? "Dent noted" : "Mark dent"} variant={kitDent ? "primary" : "ghost"} onPress={() => setKitDent((v) => !v)} />
+          <Button
+            label={kitMissing ? "Missing parts noted" : "Mark missing parts"}
+            variant={kitMissing ? "danger" : "ghost"}
+            onPress={() => setKitMissing((v) => !v)}
+          />
+          <TextInput value={kitNotes} onChangeText={setKitNotes} placeholder="Bag notes" style={styles.qty} />
+          <Button
+            label="Save kit condition"
+            onPress={() => {
+              const row: KitCondition = {
+                overall: kitGrade,
+                scuff: kitScuff || kitGrade === "scuff",
+                dent: kitDent || kitGrade === "dent",
+                missingParts: kitMissing || kitGrade === "missing",
+                notes: kitNotes.trim(),
+              };
+              saveKitCondition(task.id, task.kind === "return" ? "return" : "pickup", row);
+              Alert.alert("Saved", "Kit condition logged on this job.");
+            }}
+          />
+          {(task.kitPickupCondition || task.kitReturnCondition) ? (
+            <Muted>
+              Logged: {(task.kind === "return" ? task.kitReturnCondition : task.kitPickupCondition)?.overall}
+            </Muted>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {task.status !== "completed" ? (
+        <Card>
+          <Text style={styles.h}>Failed attempt</Text>
+          <Muted>NSZ, customer unavailable, kit refused, weather, vehicle, address — then retry.</Muted>
+          {(Object.keys(ATTEMPT_LABELS) as AttemptCode[]).map((code) => (
+            <Button
+              key={code}
+              label={ATTEMPT_LABELS[code]}
+              variant={attemptCode === code ? "primary" : "outline"}
+              onPress={() => setAttemptCode(code)}
+            />
+          ))}
+          <TextInput value={attemptNote} onChangeText={setAttemptNote} placeholder="What happened on this try?" style={styles.qty} />
+          <Button
+            label="Log failed attempt"
+            variant="danger"
+            onPress={() => {
+              logAttempt(task.id, attemptCode, attemptNote.trim());
+              setAttemptNote("");
+            }}
+          />
+          {task.status === "blocked" ? (
+            <Button
+              label="Retry this stop"
+              onPress={() => setTaskStatus(task.id, "in_progress", "Retry after failed attempt")}
+            />
+          ) : null}
+          {(task.attempts ?? []).map((a) => (
+            <Muted key={a.at}>
+              {formatWhen(a.at)} · {ATTEMPT_LABELS[a.code]}
+              {a.note ? ` · ${a.note}` : ""}
+            </Muted>
+          ))}
+        </Card>
+      ) : null}
 
       <Card>
         <Text style={styles.h}>Rental store</Text>
@@ -272,6 +418,15 @@ export default function TaskDetailScreen() {
         </Card>
       ) : null}
 
+      {task.kind === "delivery" || task.kind === "return" ? (
+        <Card>
+          <Text style={styles.h}>POD signature</Text>
+          <Muted>Customer signs here. PIN still required — this is the paper trail, not a substitute.</Muted>
+          <SignaturePad value={task.signatureSvg} onChange={(svg) => saveSignature(task.id, svg)} />
+          {task.signatureSvg ? <Muted>Signature captured.</Muted> : <Muted>Draw with a finger or mouse.</Muted>}
+        </Card>
+      ) : null}
+
       {task.items.length > 0 && task.kind !== "inventory" ? (
         <Card>
           <Text style={styles.h}>{t(lang, "serials")}</Text>
@@ -283,12 +438,12 @@ export default function TaskDetailScreen() {
               {(task.scannedSerials ?? []).includes(item.serial) ? "✓" : "○"} {item.name} · {item.serial}
             </Text>
           ))}
-          <TextInput value={serial} onChangeText={setSerial} placeholder="Type serial" style={styles.qty} />
+          <TextInput value={serial} onChangeText={setSerial} placeholder="Full serial or last 4 digits" style={styles.qty} />
           <Button
             label={t(lang, "scanSerial")}
             variant="outline"
             onPress={() => {
-              if (!matchSerial(task.id, serial)) Alert.alert("No match", "Serial is not on this job sheet.");
+              if (!matchSerial(task.id, serial)) Alert.alert("No match", "Use the full serial or the last 4 characters.");
               else setSerial("");
             }}
           />

@@ -16,13 +16,16 @@ import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
 import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
 import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
+import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity } from "@/lib/field-ops";
 import type {
   AppState,
+  AttemptCode,
   DamageReport,
   ExpenseClaim,
   FieldTask,
   FieldUser,
   GeoPhoto,
+  KitCondition,
   Lang,
   LeaveRequest,
   LeaveType,
@@ -30,11 +33,12 @@ import type {
   Shift,
   TaskStatus,
   Vendor,
+  VendorIntel,
   VendorVisit,
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v7";
+const KEY = "camartes-field-v8";
 
 export type LocationMode = "gps" | string;
 
@@ -57,7 +61,16 @@ type AppContextValue = {
   setLanguage: (lang: Lang) => void;
   login: (email: string, password: string) => string | null;
   logout: () => void;
-  clockIn: (opts?: { selfieUri?: string; overrideReason?: string }) => string | null;
+  clockIn: (opts?: {
+    selfieUri?: string;
+    overrideReason?: string;
+    safetyHelmet?: boolean;
+    safetyTwoWheeler?: boolean;
+  }) => string | null;
+  checkInTask: (taskId: string) => string | null;
+  logAttempt: (taskId: string, code: AttemptCode, note: string) => void;
+  saveKitCondition: (taskId: string, which: "pickup" | "return", condition: KitCondition) => void;
+  saveSignature: (taskId: string, svg: string) => void;
   clockOut: () => void;
   requestOt: () => void;
   openShift: Shift | null;
@@ -80,6 +93,8 @@ type AppContextValue = {
     outcome: VendorVisitOutcome;
     pitch: string;
     note: string;
+    intel: VendorIntel;
+    declineReason?: string;
   }) => string | null;
   onboardVendor: (vendorId: string) => string;
   triggerSos: () => void;
@@ -206,17 +221,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [ready, refreshVendors]);
 
   useEffect(() => {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const unsub = NetInfo.addEventListener((n) => {
       const on = !!n.isConnected;
       setOnline(on);
-      if (on) {
+      if (!on) {
+        if (retryTimer) clearTimeout(retryTimer);
+        return;
+      }
+      setState((s) => ({
+        ...s,
+        offlineQueue: s.offlineQueue.map((q) =>
+          q.synced
+            ? q
+            : { ...q, retries: (q.retries ?? 0) + 1, lastRetryAt: new Date().toISOString() },
+        ),
+      }));
+      retryTimer = setTimeout(() => {
         setState((s) => ({
           ...s,
-          offlineQueue: s.offlineQueue.map((q) => ({ ...q, synced: true })),
+          offlineQueue: s.offlineQueue.map((q) =>
+            q.synced ? q : { ...q, synced: true, lastRetryAt: new Date().toISOString() },
+          ),
         }));
-      }
+      }, 1600);
     });
-    return () => unsub();
+    return () => {
+      unsub();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, []);
 
   const persistPing = useCallback((ping: LocationPing) => {
@@ -225,7 +258,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (last && Math.abs(last.lat - ping.lat) < 0.00005 && Math.abs(last.lng - ping.lng) < 0.00005) {
         return s;
       }
-      return { ...s, pings: [...s.pings.slice(-400), ping] };
+      const tagged: LocationPing = {
+        ...ping,
+        activity: classifyActivity(ping, s.tasks, s.vendors),
+      };
+      return { ...s, pings: [...s.pings.slice(-400), tagged] };
     });
   }, []);
 
@@ -379,8 +416,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clockIn = useCallback(
-    (opts?: { selfieUri?: string; overrideReason?: string }) => {
+    (opts?: {
+      selfieUri?: string;
+      overrideReason?: string;
+      safetyHelmet?: boolean;
+      safetyTwoWheeler?: boolean;
+    }) => {
       if (state.shifts.some((sh) => !sh.clockOut)) return "Already on shift.";
+      if (!opts?.safetyHelmet || !opts?.safetyTwoWheeler) {
+        return "safety";
+      }
       if (!opts?.selfieUri && Platform.OS !== "web") {
         /* selfie encouraged; web demo may skip */
       }
@@ -404,6 +449,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         selfieUri: opts?.selfieUri,
         geofenceOk,
         geofenceOverride: opts?.overrideReason,
+        safetyHelmet: true,
+        safetyTwoWheeler: true,
       };
       setState((s) => ({ ...s, shifts: [...s.shifts, shift] }));
       if (geo) {
@@ -541,13 +588,90 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const matchSerial = useCallback((taskId: string, serial: string) => {
     const task = state.tasks.find((t) => t.id === taskId);
-    const hit = task?.items.find((i) => i.serial.toLowerCase() === serial.trim().toLowerCase());
+    const typed = serial.trim().toLowerCase();
+    if (!task || !typed) return false;
+    const hit = task.items.find((i) => {
+      const s = i.serial.toLowerCase();
+      if (s === typed) return true;
+      const last4 = s.replace(/[^a-z0-9]/g, "").slice(-4);
+      const typed4 = typed.replace(/[^a-z0-9]/g, "");
+      return typed4.length === 4 && last4 === typed4;
+    });
     if (!hit) return false;
-    const next = Array.from(new Set([...(task?.scannedSerials ?? []), hit.serial]));
+    const next = Array.from(new Set([...(task.scannedSerials ?? []), hit.serial]));
     updateTask(taskId, { scannedSerials: next });
     audit(`Serial ${hit.serial} matched on ${taskId}`);
     return true;
   }, [state.tasks, updateTask, audit]);
+
+  const checkInTask = useCallback(
+    (taskId: string) => {
+      const task = state.tasks.find((t) => t.id === taskId);
+      if (!task) return "Task not found.";
+      const geo = geoFromSelection(locationMode, live);
+      if (!geo) return "No GPS fix.";
+      const target = checkInTarget(task);
+      const km = haversineKm(geo, target);
+      if (km > CHECK_IN_KM) {
+        return `Too far (${formatKm(km)}). Move within ${Math.round(CHECK_IN_KM * 1000)} m of the stop.`;
+      }
+      const at = new Date().toISOString();
+      setState((s) => ({
+        ...s,
+        tasks: s.tasks.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                checkedInAt: at,
+                checkedInGeo: geo,
+                status: t.status === "assigned" ? "in_progress" : t.status,
+                startedAt: t.startedAt ?? at,
+                timeline: [...t.timeline, { id: `ev-${Date.now()}`, at, label: `GPS check-in · ${formatKm(km)}` }],
+              }
+            : t,
+        ),
+      }));
+      queueIfOffline(`Check-in ${taskId}`);
+      audit(`GPS check-in ${taskId}`);
+      return null;
+    },
+    [state.tasks, locationMode, live, queueIfOffline, audit],
+  );
+
+  const logAttempt = useCallback(
+    (taskId: string, code: AttemptCode, note: string) => {
+      const at = new Date().toISOString();
+      setState((s) => ({
+        ...s,
+        tasks: s.tasks.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                status: "blocked",
+                attempts: [...(t.attempts ?? []), { at, code, note }],
+                timeline: [
+                  ...t.timeline,
+                  { id: `ev-${Date.now()}`, at, label: `Failed attempt · ${ATTEMPT_LABELS[code]}` },
+                ],
+              }
+            : t,
+        ),
+      }));
+      queueIfOffline(`Attempt ${taskId} ${code}`);
+      audit(`Failed attempt ${code} on ${taskId}`);
+    },
+    [queueIfOffline, audit],
+  );
+
+  const saveKitCondition = useCallback((taskId: string, which: "pickup" | "return", condition: KitCondition) => {
+    updateTask(taskId, which === "pickup" ? { kitPickupCondition: condition } : { kitReturnCondition: condition });
+    audit(`Kit ${which} condition ${condition.overall} on ${taskId}`);
+  }, [updateTask, audit]);
+
+  const saveSignature = useCallback((taskId: string, svg: string) => {
+    updateTask(taskId, { signatureSvg: svg });
+    audit(`POD signature captured on ${taskId}`);
+  }, [updateTask, audit]);
 
   const sendWhatsApp = useCallback(
     (taskId: string, kind: "eta" | "delivered" | "collected") => {
@@ -634,9 +758,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logVendorVisit = useCallback(
-    (input: { vendorId: string; outcome: VendorVisitOutcome; pitch: string; note: string }) => {
+    (input: {
+      vendorId: string;
+      outcome: VendorVisitOutcome;
+      pitch: string;
+      note: string;
+      intel: VendorIntel;
+      declineReason?: string;
+    }) => {
       const vendor = state.vendors.find((v) => v.id === input.vendorId);
       if (!vendor) return "Vendor not found.";
+      if (input.outcome === "declined" && !input.declineReason?.trim()) {
+        return "Decline reason is mandatory.";
+      }
+      if (input.outcome !== "courtesy") {
+        const missing = [
+          !input.intel.gstin.trim() && "GSTIN",
+          !input.intel.decisionMaker.trim() && "decision maker",
+          !input.intel.competitor.trim() && "competitor",
+          !input.intel.ownedKit.trim() && "owned kit",
+          !input.intel.nextShootDate.trim() && "next shoot date",
+        ].filter(Boolean);
+        if (missing.length) return `Must-ask incomplete: ${missing.join(", ")}.`;
+      }
       const geo = live ? { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM } : undefined;
       const onSite = vendor.geoApprox ? false : geo ? haversineKm(geo, vendor.geo) <= 0.4 : false;
       const visit: VendorVisit = {
@@ -666,6 +810,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ...v,
                 status: v.status === "onboarded" ? v.status : nextStatus,
                 partnerCode: v.partnerCode,
+                gstin: input.intel.gstin || v.gstin,
+                decisionMaker: input.intel.decisionMaker || v.decisionMaker,
+                competitor: input.intel.competitor || v.competitor,
+                ownedKit: input.intel.ownedKit || v.ownedKit,
+                nextShootDate: input.intel.nextShootDate || v.nextShootDate,
+                declineReason: input.declineReason?.trim() || v.declineReason,
               }
             : v,
         ),
@@ -674,6 +824,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ? {
                 ...t,
                 vendorOutcome: input.outcome,
+                vendorIntel: input.intel,
+                declineReason: input.declineReason?.trim() || t.declineReason,
                 timeline: [
                   ...t.timeline,
                   { id: `ev-${Date.now()}`, at: visit.at, label: `Vendor visit · ${input.outcome}` },
@@ -729,6 +881,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     clockIn,
+    checkInTask,
+    logAttempt,
+    saveKitCondition,
+    saveSignature,
     clockOut,
     requestOt,
     openShift,

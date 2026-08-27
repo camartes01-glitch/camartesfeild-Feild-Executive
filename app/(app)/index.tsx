@@ -1,17 +1,17 @@
 import { useState } from "react";
-import { Platform, ScrollView, StyleSheet, Text, TextInput, View, Alert } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Alert } from "react-native";
 import { Href, router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import { addDays, format, parseISO } from "date-fns";
 import { Button, Card, Muted, Title } from "@/components/ui";
-import { KindBadge, StatusBadge } from "@/components/task-badges";
+import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { formatKm, haversineKm, pathKm } from "@/lib/geo";
-import { formatDuration, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
-import { LOCATION_PRESETS, TEAM } from "@/lib/seed";
+import { formatDuration, formatWhen, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
+import { LOCATION_PRESETS, ROSTER, TEAM } from "@/lib/seed";
 import { t } from "@/lib/i18n";
-import { format, parseISO } from "date-fns";
 
 export default function HomeScreen() {
   const {
@@ -31,12 +31,21 @@ export default function HomeScreen() {
     cityManager,
   } = useApp();
   const lang = state.language;
-  const openTasks = state.tasks.filter((t) => t.status !== "completed");
+  const today = localYmd();
+  const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
+  const openTasks = [...state.tasks]
+    .filter((t) => t.status !== "completed" && t.scheduledFor.slice(0, 10) === today)
+    .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99));
+  const tomorrowTasks = state.tasks
+    .filter((t) => t.status !== "completed" && t.scheduledFor.slice(0, 10) === tomorrow)
+    .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99));
   const next = openTasks[0];
+  const tomorrowRoster = ROSTER.find((r) => r.date === tomorrow);
   const stats = monthStats(state.shifts);
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
-  const today = localYmd();
   const todayKm = pathKm(state.pings.filter((p) => format(parseISO(p.at), "yyyy-MM-dd") === today));
+  const [helmet, setHelmet] = useState(false);
+  const [twoWheeler, setTwoWheeler] = useState(false);
   const unread = state.notices.filter((n) => !n.read).length;
   const [override, setOverride] = useState("");
   const [geoError, setGeoError] = useState(false);
@@ -53,7 +62,16 @@ export default function HomeScreen() {
       if (shot.canceled || !shot.assets[0]) return;
       selfieUri = shot.assets[0].uri;
     }
-    const err = clockIn({ selfieUri: selfieUri ?? (Platform.OS === "web" ? "web-selfie" : undefined), overrideReason: override });
+    const err = clockIn({
+      selfieUri: selfieUri ?? (Platform.OS === "web" ? "web-selfie" : undefined),
+      overrideReason: override,
+      safetyHelmet: helmet,
+      safetyTwoWheeler: twoWheeler,
+    });
+    if (err === "safety") {
+      Alert.alert("Safety checklist", "Confirm helmet and two-wheeler before punch-in.");
+      return;
+    }
     if (err === "geofence") {
       setGeoError(true);
       Alert.alert("Outside hub geofence", t(lang, "geofenceFail"));
@@ -145,12 +163,20 @@ export default function HomeScreen() {
         </Text>
         {geoError ? <Muted>{t(lang, "geofenceFail")}</Muted> : <Muted>{t(lang, "selfieNeeded")}</Muted>}
         {!openShift ? (
-          <TextInput
-            placeholder="Override reason if you are not at a hub"
-            value={override}
-            onChangeText={setOverride}
-            style={styles.input}
-          />
+          <>
+            <Pressable onPress={() => setHelmet((v) => !v)} style={[styles.check, helmet && styles.checkOn]}>
+              <Text style={helmet ? styles.checkTxtOn : styles.checkTxt}>Helmet on</Text>
+            </Pressable>
+            <Pressable onPress={() => setTwoWheeler((v) => !v)} style={[styles.check, twoWheeler && styles.checkOn]}>
+              <Text style={twoWheeler ? styles.checkTxtOn : styles.checkTxt}>Two-wheeler / vehicle check</Text>
+            </Pressable>
+            <TextInput
+              placeholder="Override reason if you are not at a hub"
+              value={override}
+              onChangeText={setOverride}
+              style={styles.input}
+            />
+          </>
         ) : null}
         {openShift ? (
           <Button label={t(lang, "clockOut")} variant="outline" onPress={clockOut} />
@@ -166,14 +192,42 @@ export default function HomeScreen() {
       </View>
 
       <Card>
-        <Text style={styles.h}>{t(lang, "route")}</Text>
-        {openTasks.map((task, i) => (
-          <Muted key={task.id}>
-            {i + 1}. {task.customerPlace.area} · {task.bookingRef}
-          </Muted>
+        <Text style={styles.h}>Beat plan · today</Text>
+        {openTasks.length === 0 ? <Muted>No stops rostered for today.</Muted> : null}
+        {openTasks.map((task) => (
+          <Pressable key={task.id} onPress={() => router.push(`/(app)/tasks/${task.id}`)}>
+            <View style={{ gap: 2, paddingVertical: 6 }}>
+              <Text style={styles.body}>
+                {task.beatSeq ?? "–"}. {task.customerPlace.area}
+                {task.beatWindow ? ` · ${task.beatWindow}` : ""}
+              </Text>
+              <Muted>
+                {task.bookingRef} · {task.title}
+              </Muted>
+              <SlaBadge task={task} />
+            </View>
+          </Pressable>
         ))}
         <Button label={t(lang, "hubTeam")} variant="ghost" onPress={() => router.push("/hub" as Href)} />
         <Button label={t(lang, "vendors")} variant="ghost" onPress={() => router.push("/(app)/vendors")} />
+      </Card>
+
+      <Card>
+        <Text style={styles.h}>Tomorrow’s roster</Text>
+        {tomorrowRoster ? (
+          <Muted>
+            {tomorrowRoster.date} · {tomorrowRoster.window} · {tomorrowRoster.hub}
+          </Muted>
+        ) : (
+          <Muted>No hub window published yet.</Muted>
+        )}
+        {tomorrowTasks.length === 0 ? <Muted>No jobs assigned yet for tomorrow.</Muted> : null}
+        {tomorrowTasks.map((task) => (
+          <Muted key={task.id}>
+            {task.beatSeq ?? "–"}. {task.beatWindow ?? formatWhen(task.scheduledFor)} · {task.customerPlace.area} ·{" "}
+            {task.bookingRef}
+          </Muted>
+        ))}
       </Card>
 
       {next ? (
@@ -227,4 +281,14 @@ const styles = StyleSheet.create({
     padding: 10,
     backgroundColor: colors.cream,
   },
+  check: {
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: colors.cream,
+  },
+  checkOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkTxt: { fontWeight: "700", color: colors.ink },
+  checkTxtOn: { fontWeight: "700", color: "#fff" },
 });

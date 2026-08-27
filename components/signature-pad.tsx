@@ -1,0 +1,85 @@
+import { useMemo, useRef, useState } from "react";
+import { PanResponder, StyleSheet, View } from "react-native";
+import Svg, { Path, Rect } from "react-native-svg";
+import { colors } from "@/constants/theme";
+
+type Pt = { x: number; y: number };
+
+function toPath(strokes: Pt[][]) {
+  return strokes
+    .map((stroke) => {
+      if (!stroke.length) return "";
+      const [first, ...rest] = stroke;
+      return `M ${first.x.toFixed(1)} ${first.y.toFixed(1)} ${rest.map((p) => `L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ")}`;
+    })
+    .join(" ");
+}
+
+export function SignaturePad({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange: (svg: string) => void;
+}) {
+  const [strokes, setStrokes] = useState<Pt[][]>([]);
+  const current = useRef<Pt[]>([]);
+  const box = useRef({ w: 320, h: 140 });
+
+  const responder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (e) => {
+          const { locationX, locationY } = e.nativeEvent;
+          current.current = [{ x: locationX, y: locationY }];
+          setStrokes((s) => [...s, current.current]);
+        },
+        onPanResponderMove: (e) => {
+          const { locationX, locationY } = e.nativeEvent;
+          current.current = [...current.current, { x: locationX, y: locationY }];
+          setStrokes((s) => {
+            const next = s.slice(0, -1);
+            next.push(current.current);
+            return next;
+          });
+        },
+        onPanResponderRelease: () => {
+          setStrokes((s) => {
+            onChange(toPath(s));
+            return s;
+          });
+        },
+      }),
+    [onChange],
+  );
+
+  const d = value || toPath(strokes);
+
+  return (
+    <View
+      style={styles.wrap}
+      onLayout={(e) => {
+        box.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height };
+      }}
+      {...responder.panHandlers}
+    >
+      <Svg width="100%" height="140">
+        <Rect x={0} y={0} width="100%" height="140" fill="#fff" />
+        {d ? <Path d={d} stroke={colors.ink} strokeWidth={2.4} fill="none" strokeLinecap="round" strokeLinejoin="round" /> : null}
+      </Svg>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: {
+    height: 140,
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+  },
+});

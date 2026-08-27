@@ -6,6 +6,23 @@ Brand: orange `#FF6B35` on cream `#FFF7ED`, matching camartes.com.
 
 Field executives also visit nearby photography studios, freelance photographers, videographers, album designers, video editors, LED-wall and WebLive partners to market Camartes and onboard them onto the platform.
 
+Field ops in this build:
+
+- Beat / journey plan with stop order and time windows; tomorrow’s roster on Home
+- Outlet GPS check-in (150 m) in addition to geotagged photos
+- Failed-attempt codes (NSZ, customer unavailable, kit refused, weather, vehicle, address) and retry
+- Kit condition checklist on pickup/return (good / scuff / dent / missing)
+- POD signature plus the existing in-app handover PIN (no SMS)
+- Vendor must-ask: GST, decision maker, competitor, owned kit, next shoot; decline reason is mandatory
+- Travel vs hub vs customer vs vendor minutes from the GPS trail
+- City-manager hub map: live FEs and SLA-red jobs
+- SLA countdown on task cards
+- Helmet / two-wheeler safety checklist at punch-in
+- Serial last-4 quick match (no barcode scanner)
+- Offline queue retries on reconnect instead of marking everything synced immediately
+
+Call masking and EOD cash settlement are not in this slice.
+
 The **Services** tab uses the same vendor categories as [camartes.com Services](https://www.camartes.com): freelancer (Photographer, Videographer, Album Designer, Video Editor, Web/Live, LED Wall, Fly Cam / Drone) and business (Photography Firm, Camera Rental, Service Centres, Outdoor Studios, Editing Studios, Printing Labs, Software Services). Listings refresh from the public Camartes API when it is available.
 
 SOS calls the **city manager nearest to your live GPS**. Device GPS is requested as soon as you sign in (the shift trail still records only while you are clocked in).
