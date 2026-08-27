@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { PanResponder, StyleSheet, View } from "react-native";
+import { PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path, Rect } from "react-native-svg";
 import { colors } from "@/constants/theme";
 
@@ -24,7 +24,7 @@ export function SignaturePad({
 }) {
   const [strokes, setStrokes] = useState<Pt[][]>([]);
   const current = useRef<Pt[]>([]);
-  const box = useRef({ w: 320, h: 140 });
+  const d = value || toPath(strokes);
 
   const responder = useMemo(
     () =>
@@ -55,20 +55,37 @@ export function SignaturePad({
     [onChange],
   );
 
-  const d = value || toPath(strokes);
-
   return (
-    <View
-      style={styles.wrap}
-      onLayout={(e) => {
-        box.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height };
-      }}
-      {...responder.panHandlers}
-    >
-      <Svg width="100%" height="140">
-        <Rect x={0} y={0} width="100%" height="140" fill="#fff" />
-        {d ? <Path d={d} stroke={colors.ink} strokeWidth={2.4} fill="none" strokeLinecap="round" strokeLinejoin="round" /> : null}
-      </Svg>
+    <View>
+      <View style={styles.wrap} {...responder.panHandlers}>
+        <Svg width="100%" height="140">
+          <Rect x={0} y={0} width="100%" height="140" fill="#fff" />
+          {d ? (
+            <Path
+              d={d}
+              stroke={colors.ink}
+              strokeWidth={2.4}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ) : null}
+        </Svg>
+        {!d ? (
+          <Text pointerEvents="none" style={styles.hint}>
+            Customer signs here
+          </Text>
+        ) : null}
+      </View>
+      <Pressable
+        onPress={() => {
+          setStrokes([]);
+          onChange("");
+        }}
+        style={styles.clear}
+      >
+        <Text style={styles.clearTxt}>Clear signature</Text>
+      </Pressable>
     </View>
   );
 }
@@ -82,4 +99,15 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "#fff",
   },
+  hint: {
+    position: "absolute",
+    alignSelf: "center",
+    top: 58,
+    width: "100%",
+    textAlign: "center",
+    color: colors.muted,
+    fontWeight: "600",
+  },
+  clear: { alignSelf: "flex-end", paddingVertical: 8 },
+  clearTxt: { color: colors.primaryDark, fontWeight: "700", fontSize: 13 },
 });

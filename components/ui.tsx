@@ -29,12 +29,14 @@ export function Button({
   variant = "primary",
   disabled,
   flex,
+  compact,
 }: {
   label: string;
   onPress: () => void;
   variant?: "primary" | "outline" | "ghost" | "danger";
   disabled?: boolean;
   flex?: number;
+  compact?: boolean;
 }) {
   return (
     <Pressable
@@ -42,6 +44,7 @@ export function Button({
       disabled={disabled}
       style={[
         styles.btn,
+        compact && styles.btnCompact,
         flex != null ? { flex } : null,
         variant === "primary" && styles.btnPrimary,
         variant === "outline" && styles.btnOutline,
@@ -153,9 +156,11 @@ const styles = StyleSheet.create({
   btn: {
     borderRadius: 12,
     paddingVertical: 13,
+    paddingHorizontal: 12,
     alignItems: "center",
     justifyContent: "center",
   },
+  btnCompact: { paddingVertical: 8, paddingHorizontal: 10 },
   btnPrimary: { backgroundColor: colors.primary },
   btnOutline: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.primary },
   btnGhost: { backgroundColor: colors.peach },

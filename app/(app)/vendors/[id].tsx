@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Alert, Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Button, Card, Field, Muted, Title } from "@/components/ui";
+import { Chip, ChipWrap } from "@/components/chips";
 import { GeoCamera } from "@/components/geo-camera";
 import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
@@ -145,14 +146,11 @@ export default function VendorDetailScreen() {
       </Card>
       <Card>
         <Text style={styles.h}>Log marketing visit</Text>
-        {OUTCOMES.map((o) => (
-          <Button
-            key={o.id}
-            label={o.label}
-            variant={outcome === o.id ? "primary" : "outline"}
-            onPress={() => setOutcome(o.id)}
-          />
-        ))}
+        <ChipWrap>
+          {OUTCOMES.map((o) => (
+            <Chip key={o.id} label={o.label} selected={outcome === o.id} tone={o.id === "declined" ? "danger" : "default"} onPress={() => setOutcome(o.id)} />
+          ))}
+        </ChipWrap>
         <Field label="GSTIN" value={gstin} onChangeText={setGstin} placeholder="Required except courtesy visit" />
         <Field label="Decision maker" value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Name / role" />
         <Field label="Competitor in use" value={competitor} onChangeText={setCompetitor} placeholder="Who they rent from today" />

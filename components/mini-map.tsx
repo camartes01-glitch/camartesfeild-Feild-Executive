@@ -5,7 +5,7 @@ import type { GeoPoint } from "@/lib/types";
 
 type Marker = { id: string; label: string; color: string; point: GeoPoint };
 
-export function MiniMap({ markers }: { markers: Marker[] }) {
+export function MiniMap({ markers, height = 180 }: { markers: Marker[]; height?: number }) {
   const [size, setSize] = useState({ w: 0, h: 180 });
   if (markers.length === 0) return null;
   const lats = markers.map((m) => m.point.lat);
@@ -23,7 +23,7 @@ export function MiniMap({ markers }: { markers: Marker[] }) {
   }
 
   return (
-    <View style={styles.wrap} onLayout={onLayout}>
+    <View style={[styles.wrap, { height }]} onLayout={onLayout}>
       {size.w > 0
         ? markers.map((m) => (
             <View

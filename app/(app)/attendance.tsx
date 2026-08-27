@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Button, Card, Field, Muted, Title } from "@/components/ui";
+import { CheckRow, Chip, ChipWrap } from "@/components/chips";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { BANJARA, HITEC, LOCATION_PRESETS, ROSTER } from "@/lib/seed";
@@ -95,25 +96,26 @@ export default function AttendanceScreen() {
         ) : (
           <>
             <Muted>Stand at Banjara Hills or HITEC City hub, or pick that pin. Off-site needs a reason.</Muted>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <ChipWrap>
               {LOCATION_PRESETS.filter((p) => p.id === "live" || p.id === "banjara" || p.id === "hitec").map((p) => {
                 const id = p.id === "live" ? "gps" : p.id;
                 return (
-                  <Button
+                  <Chip
                     key={p.id}
-                    label={p.label}
-                    variant={locationMode === id ? "primary" : "outline"}
+                    label={p.label.replace(" Hills hub", "").replace(" City hub", "")}
+                    selected={locationMode === id}
                     onPress={() => setLocationMode(id)}
                   />
                 );
               })}
-            </ScrollView>
-            <Pressable onPress={() => setHelmet((v) => !v)} style={[styles.check, helmet && styles.checkOn]}>
-              <Text style={helmet ? styles.checkTxtOn : styles.checkTxt}>Helmet on</Text>
-            </Pressable>
-            <Pressable onPress={() => setTwoWheeler((v) => !v)} style={[styles.check, twoWheeler && styles.checkOn]}>
-              <Text style={twoWheeler ? styles.checkTxtOn : styles.checkTxt}>Two-wheeler / vehicle check</Text>
-            </Pressable>
+            </ChipWrap>
+            <CheckRow label="Helmet on" checked={helmet} onToggle={() => setHelmet((v) => !v)} />
+            <CheckRow
+              label="Two-wheeler / vehicle check"
+              checked={twoWheeler}
+              onToggle={() => setTwoWheeler((v) => !v)}
+              hint="Lights, brakes, bag straps"
+            />
             <Field
               label="Override reason"
               value={reason}
@@ -187,14 +189,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.peachBorder,
   },
-  check: {
-    borderWidth: 1,
-    borderColor: colors.peachBorder,
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: colors.cream,
-  },
-  checkOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  checkTxt: { fontWeight: "700", color: colors.ink },
-  checkTxtOn: { fontWeight: "700", color: "#fff" },
 });

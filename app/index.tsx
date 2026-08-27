@@ -2,6 +2,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } fr
 import { useEffect, useState } from "react";
 import { router } from "expo-router";
 import { BrandMark, Button, Card, Field, Muted, Title } from "@/components/ui";
+import { Chip, ChipWrap } from "@/components/chips";
 import { colors } from "@/constants/theme";
 import { t } from "@/lib/i18n";
 import { useApp } from "@/lib/app-context";
@@ -49,7 +50,12 @@ export default function LoginScreen() {
           <Field label={t(lang, "password")} secureTextEntry value={password} onChangeText={setPassword} />
           {error ? <Text style={styles.err}>{error}</Text> : null}
           <Button label={t(lang, "signIn")} onPress={submit} />
-          <Muted>Demo staff: rahul, priya or arjun (camartes.com) · password field2026</Muted>
+          <Muted>Tap a name to fill the demo login. Password is already set.</Muted>
+          <ChipWrap>
+            <Chip label="Rahul · 104" selected={email.startsWith("rahul")} onPress={() => setEmail("rahul@camartes.com")} />
+            <Chip label="Priya · 109" selected={email.startsWith("priya")} onPress={() => setEmail("priya@camartes.com")} />
+            <Chip label="Arjun · 112" selected={email.startsWith("arjun")} onPress={() => setEmail("arjun@camartes.com")} />
+          </ChipWrap>
         </Card>
       </ScrollView>
     </KeyboardAvoidingView>

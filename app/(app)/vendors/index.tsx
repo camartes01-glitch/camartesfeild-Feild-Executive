@@ -60,6 +60,7 @@ export default function VendorsScreen() {
         {vendorsSync.loading ? <ActivityIndicator color={colors.primary} /> : null}
       </Card>
       <MiniMap
+        height={140}
         markers={[
           { id: "you", label: "You", color: colors.primary, point: you },
           ...list.slice(0, 10).map((v) => ({

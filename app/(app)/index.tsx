@@ -4,6 +4,7 @@ import { Href, router } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { addDays, format, parseISO } from "date-fns";
 import { Button, Card, Muted, Title } from "@/components/ui";
+import { CheckRow, Chip, ChipWrap } from "@/components/chips";
 import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { MiniMap } from "@/components/mini-map";
 import { colors } from "@/constants/theme";
@@ -12,6 +13,7 @@ import { formatKm, haversineKm, pathKm } from "@/lib/geo";
 import { formatDuration, formatWhen, localYmd, monthStats, shiftMinutes } from "@/lib/hours";
 import { LOCATION_PRESETS, ROSTER, TEAM } from "@/lib/seed";
 import { t } from "@/lib/i18n";
+import type { FieldTask } from "@/lib/types";
 
 export default function HomeScreen() {
   const {
@@ -33,13 +35,13 @@ export default function HomeScreen() {
   const lang = state.language;
   const today = localYmd();
   const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
-  const openTasks = [...state.tasks]
-    .filter((t) => t.status !== "completed" && t.scheduledFor.slice(0, 10) === today)
-    .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99));
-  const tomorrowTasks = state.tasks
-    .filter((t) => t.status !== "completed" && t.scheduledFor.slice(0, 10) === tomorrow)
-    .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99));
-  const next = openTasks[0];
+  const openAll = [...state.tasks]
+    .filter((t) => t.status !== "completed")
+    .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
+  const todayStops = openAll.filter((t) => t.scheduledFor.slice(0, 10) === today);
+  const beat = todayStops.length ? todayStops : openAll.filter((t) => t.scheduledFor.slice(0, 10) !== tomorrow);
+  const tomorrowTasks = openAll.filter((t) => t.scheduledFor.slice(0, 10) === tomorrow);
+  const next = beat[0];
   const tomorrowRoster = ROSTER.find((r) => r.date === tomorrow);
   const stats = monthStats(state.shifts);
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
@@ -49,6 +51,7 @@ export default function HomeScreen() {
   const unread = state.notices.filter((n) => !n.read).length;
   const [override, setOverride] = useState("");
   const [geoError, setGeoError] = useState(false);
+  const [showMap, setShowMap] = useState(false);
 
   async function doClockIn() {
     let selfieUri: string | undefined;
@@ -87,164 +90,162 @@ export default function HomeScreen() {
           <Text style={styles.bannerText}>{t(lang, "offline")}</Text>
         </View>
       ) : null}
-      <Muted>{t(lang, "hyderabadHub")}</Muted>
-      <Title>
-        {t(lang, "hello")}, {user?.name.split(" ")[0]}
-      </Title>
-      <Text style={styles.emp}>
-        {user?.employeeId} · {user?.employment}
-      </Text>
 
-      <View style={styles.row}>
-        <Button
-          flex={1}
-          label={`SOS · ${cityManager.manager.city}`}
-          variant="danger"
-          onPress={triggerSos}
-        />
-        <Button
-          flex={1}
-          label={`${t(lang, "notifications")}${unread ? ` (${unread})` : ""}`}
-          variant="outline"
-          onPress={markNoticesRead}
-        />
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Muted>{t(lang, "hyderabadHub")}</Muted>
+          <Title>
+            {t(lang, "hello")}, {user?.name.split(" ")[0]}
+          </Title>
+          <Text style={styles.emp}>
+            {user?.employeeId} · {openShift ? "On shift" : "Off shift"}
+          </Text>
+        </View>
+        <Pressable onPress={triggerSos} style={styles.sos}>
+          <Text style={styles.sosTxt}>SOS</Text>
+        </Pressable>
       </View>
 
-      {state.notices.filter((n) => !n.read).slice(0, 2).map((n) => (
-        <Card key={n.id}>
-          <Text style={styles.h}>{n.title}</Text>
-          <Muted>{n.body}</Muted>
-        </Card>
-      ))}
+      <View style={styles.stats}>
+        <Stat label="Stops" value={String(beat.length)} />
+        <Stat label="Km" value={formatKm(todayKm)} />
+        <Stat label="Month" value={formatDuration(stats.minutes)} />
+      </View>
 
       <Card>
-        <Text style={styles.h}>{t(lang, "liveLocation")}</Text>
-        <Muted>{t(lang, "trackingOnShift")}</Muted>
-        <Muted>
-          City manager: {cityManager.manager.name} · {cityManager.manager.city} · {cityManager.manager.phone}
-        </Muted>
-        <MiniMap
-          markers={[
-            { id: "you", label: "You", color: colors.primary, point: you },
-            ...TEAM.filter((m) => m.id !== user?.id).map((m) => ({
-              id: m.id,
-              label: m.name.split(" ")[0],
-              color: colors.orange,
-              point: m.geo,
-            })),
-          ]}
-        />
-        <Muted>
-          {live
-            ? `${live.source === "gps" ? "Device GPS" : "Simulated"} · ${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} · ±${Math.round(live.accuracyM)} m · ${new Date(live.at).toLocaleTimeString()}`
-            : gpsMessage ?? "Waiting for a location fix…"}
-        </Muted>
-        {gpsMessage ? <Muted>{gpsMessage}</Muted> : null}
-        <Button label="Use device GPS" variant={locationMode === "gps" ? "primary" : "outline"} onPress={refreshGps} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          {LOCATION_PRESETS.map((p) => {
-            const id = p.id === "live" ? "gps" : p.id;
-            return (
-              <Button
-                key={p.id}
-                label={p.label}
-                variant={locationMode === id ? "primary" : "outline"}
-                onPress={() => setLocationMode(id)}
-              />
-            );
-          })}
-        </ScrollView>
-      </Card>
-
-      <Card>
-        <Text style={styles.h}>{openShift ? t(lang, "onShift") : t(lang, "offShift")}</Text>
+        <Text style={styles.h}>{openShift ? t(lang, "onShift") : "Punch in"}</Text>
         <Text style={styles.body}>
-          {openShift ? formatDuration(shiftMinutes(openShift)) : `${stats.days} days · ${formatDuration(stats.minutes)}`}
+          {openShift ? formatDuration(shiftMinutes(openShift)) : "Selfie · hub geofence · safety"}
         </Text>
-        {geoError ? <Muted>{t(lang, "geofenceFail")}</Muted> : <Muted>{t(lang, "selfieNeeded")}</Muted>}
+        {geoError ? <Muted>{t(lang, "geofenceFail")}</Muted> : null}
         {!openShift ? (
           <>
-            <Pressable onPress={() => setHelmet((v) => !v)} style={[styles.check, helmet && styles.checkOn]}>
-              <Text style={helmet ? styles.checkTxtOn : styles.checkTxt}>Helmet on</Text>
-            </Pressable>
-            <Pressable onPress={() => setTwoWheeler((v) => !v)} style={[styles.check, twoWheeler && styles.checkOn]}>
-              <Text style={twoWheeler ? styles.checkTxtOn : styles.checkTxt}>Two-wheeler / vehicle check</Text>
-            </Pressable>
+            <CheckRow label="Helmet on" checked={helmet} onToggle={() => setHelmet((v) => !v)} />
+            <CheckRow
+              label="Two-wheeler / vehicle check"
+              checked={twoWheeler}
+              onToggle={() => setTwoWheeler((v) => !v)}
+              hint="Lights, brakes, bag straps"
+            />
             <TextInput
               placeholder="Override reason if you are not at a hub"
               value={override}
               onChangeText={setOverride}
               style={styles.input}
             />
+            <Button label={t(lang, "clockIn")} onPress={() => void doClockIn()} />
           </>
-        ) : null}
-        {openShift ? (
-          <Button label={t(lang, "clockOut")} variant="outline" onPress={clockOut} />
         ) : (
-          <Button label={t(lang, "clockIn")} onPress={() => void doClockIn()} />
+          <Button label={t(lang, "clockOut")} variant="outline" onPress={clockOut} />
         )}
       </Card>
 
-      <View style={styles.stats}>
-        <Stat label="Open" value={String(openTasks.length)} />
-        <Stat label="Km" value={formatKm(todayKm)} />
-        <Stat label="Team" value={String(TEAM.length)} />
-      </View>
-
-      <Card>
-        <Text style={styles.h}>Beat plan · today</Text>
-        {openTasks.length === 0 ? <Muted>No stops rostered for today.</Muted> : null}
-        {openTasks.map((task) => (
-          <Pressable key={task.id} onPress={() => router.push(`/(app)/tasks/${task.id}`)}>
-            <View style={{ gap: 2, paddingVertical: 6 }}>
-              <Text style={styles.body}>
-                {task.beatSeq ?? "–"}. {task.customerPlace.area}
-                {task.beatWindow ? ` · ${task.beatWindow}` : ""}
-              </Text>
-              <Muted>
-                {task.bookingRef} · {task.title}
-              </Muted>
-              <SlaBadge task={task} />
-            </View>
-          </Pressable>
+      <Card accent={false}>
+        <View style={styles.beatHead}>
+          <Text style={styles.h}>Beat · today</Text>
+          <Button label="Hub map" variant="ghost" compact onPress={() => router.push("/hub" as Href)} />
+        </View>
+        {beat.length === 0 ? <Muted>No open stops.</Muted> : null}
+        {beat.map((task, i) => (
+          <BeatStop key={task.id} task={task} index={i} next={i === 0} />
         ))}
-        <Button label={t(lang, "hubTeam")} variant="ghost" onPress={() => router.push("/hub" as Href)} />
-        <Button label={t(lang, "vendors")} variant="ghost" onPress={() => router.push("/(app)/vendors")} />
       </Card>
 
-      <Card>
-        <Text style={styles.h}>Tomorrow’s roster</Text>
+      <Card accent={false}>
+        <Text style={styles.h}>Tomorrow</Text>
         {tomorrowRoster ? (
           <Muted>
-            {tomorrowRoster.date} · {tomorrowRoster.window} · {tomorrowRoster.hub}
+            {tomorrowRoster.window} · {tomorrowRoster.hub}
           </Muted>
-        ) : (
-          <Muted>No hub window published yet.</Muted>
-        )}
-        {tomorrowTasks.length === 0 ? <Muted>No jobs assigned yet for tomorrow.</Muted> : null}
+        ) : null}
+        {tomorrowTasks.length === 0 ? <Muted>No jobs assigned yet.</Muted> : null}
         {tomorrowTasks.map((task) => (
           <Muted key={task.id}>
-            {task.beatSeq ?? "–"}. {task.beatWindow ?? formatWhen(task.scheduledFor)} · {task.customerPlace.area} ·{" "}
-            {task.bookingRef}
+            {task.beatSeq ?? "–"}. {task.beatWindow} · {task.customerPlace.area}
           </Muted>
         ))}
       </Card>
 
-      {next ? (
+      <Card>
+        <View style={styles.beatHead}>
+          <Text style={styles.h}>{t(lang, "liveLocation")}</Text>
+          <Button label={showMap ? "Hide map" : "Show map"} variant="ghost" compact onPress={() => setShowMap((v) => !v)} />
+        </View>
+        <Muted>
+          {live
+            ? `${live.source === "gps" ? "GPS" : "Pin"} · ±${Math.round(live.accuracyM)} m`
+            : gpsMessage ?? "Waiting for a location fix…"}
+        </Muted>
+        {showMap ? (
+          <MiniMap
+            height={140}
+            markers={[
+              { id: "you", label: "You", color: colors.primary, point: you },
+              ...TEAM.filter((m) => m.id !== user?.id).map((m) => ({
+                id: m.id,
+                label: m.name.split(" ")[0],
+                color: colors.orange,
+                point: m.geo,
+              })),
+            ]}
+          />
+        ) : null}
+        <ChipWrap>
+          <Chip label="Device GPS" selected={locationMode === "gps"} onPress={refreshGps} />
+          {LOCATION_PRESETS.filter((p) => p.id !== "live").map((p) => (
+            <Chip key={p.id} label={p.label.replace(" Hills hub", "").replace(" City hub", "")} selected={locationMode === p.id} onPress={() => setLocationMode(p.id)} />
+          ))}
+        </ChipWrap>
+      </Card>
+
+      {unread ? (
         <Card>
-          <Text style={styles.h}>{t(lang, "nextStop")}</Text>
-          <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-            <KindBadge kind={next.kind} />
-            <StatusBadge status={next.status} />
+          <View style={styles.beatHead}>
+            <Text style={styles.h}>Alerts ({unread})</Text>
+            <Button label="Mark read" variant="ghost" compact onPress={markNoticesRead} />
           </View>
-          <Text style={styles.body}>{next.title}</Text>
-          <Muted>
-            Store → customer {formatKm(haversineKm(next.store.geo, next.customerPlace.geo))}
-          </Muted>
-          <Button label={t(lang, "openTask")} onPress={() => router.push(`/(app)/tasks/${next.id}`)} />
+          {state.notices
+            .filter((n) => !n.read)
+            .slice(0, 2)
+            .map((n) => (
+              <Muted key={n.id}>
+                {n.title} — {n.body}
+              </Muted>
+            ))}
         </Card>
       ) : null}
+
+      {next ? (
+        <Muted>
+          Next: {next.customerPlace.area}
+          {next.beatWindow ? ` · ${next.beatWindow}` : ""}
+        </Muted>
+      ) : null}
     </ScrollView>
+  );
+}
+
+function BeatStop({ task, index, next }: { task: FieldTask; index: number; next: boolean }) {
+  return (
+    <Pressable onPress={() => router.push(`/(app)/tasks/${task.id}`)} style={[styles.stop, next && styles.stopNext]}>
+      <View style={[styles.num, next && styles.numNext]}>
+        <Text style={styles.numTxt}>{task.beatSeq ?? index + 1}</Text>
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={styles.stopTitle} numberOfLines={1}>
+          {task.customerPlace.area}
+          {next ? " · next" : ""}
+        </Text>
+        <Muted>
+          {task.beatWindow ?? formatWhen(task.scheduledFor)} · {task.bookingRef}
+        </Muted>
+        <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+          <KindBadge kind={task.kind} />
+          <StatusBadge status={task.status} />
+          <SlaBadge task={task} />
+        </View>
+      </View>
+    </Pressable>
   );
 }
 
@@ -259,10 +260,18 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 48 },
+  header: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   h: { fontSize: 16, fontWeight: "800", color: colors.ink },
   body: { fontSize: 15, fontWeight: "700", color: colors.ink },
   emp: { color: colors.primaryDark, fontWeight: "700" },
-  row: { flexDirection: "row", gap: 8 },
+  sos: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  sosTxt: { color: colors.danger, fontWeight: "800" },
   stats: { flexDirection: "row", gap: 8 },
   stat: {
     flex: 1,
@@ -281,14 +290,26 @@ const styles = StyleSheet.create({
     padding: 10,
     backgroundColor: colors.cream,
   },
-  check: {
-    borderWidth: 1,
-    borderColor: colors.peachBorder,
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: colors.cream,
+  beatHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  stop: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.peachBorder,
   },
-  checkOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  checkTxt: { fontWeight: "700", color: colors.ink },
-  checkTxtOn: { fontWeight: "700", color: "#fff" },
+  stopNext: { backgroundColor: colors.cream, marginHorizontal: -8, paddingHorizontal: 8, borderRadius: 12, borderTopWidth: 0 },
+  num: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.primaryDark,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+    opacity: 0.55,
+  },
+  numNext: { backgroundColor: colors.primary, opacity: 1 },
+  numTxt: { fontWeight: "800", color: "#fff", fontSize: 12 },
+  stopTitle: { fontWeight: "800", color: colors.ink, fontSize: 15 },
 });

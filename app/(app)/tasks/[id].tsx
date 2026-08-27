@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { Button, Card, Muted } from "@/components/ui";
+import { CheckRow, Chip, ChipWrap, StepRow } from "@/components/chips";
 import { GeoCamera } from "@/components/geo-camera";
 import { MiniMap } from "@/components/mini-map";
 import { SignaturePad } from "@/components/signature-pad";
@@ -124,6 +125,33 @@ export default function TaskDetailScreen() {
     Alert.alert("Done", "Task closed.");
   }
 
+  const photosNeed = checkpoints(task.kind);
+  const photosMissing = photosNeed.filter((c) => !photosOk(c));
+  const serialsDone = !task.items.length || task.kind === "inventory" || (task.scannedSerials?.length ?? 0) >= task.items.length;
+  const kitDone =
+    task.kind === "delivery"
+      ? !!task.kitPickupCondition
+      : task.kind === "return"
+        ? !!task.kitReturnCondition
+        : true;
+  const pinDone = task.kind !== "delivery" && task.kind !== "return" ? true : !!task.otpVerified;
+  const sigDone = task.kind !== "delivery" && task.kind !== "return" ? true : !!task.signatureSvg;
+  const steps = [
+    { label: "GPS check-in", done: !!task.checkedInAt },
+    { label: "Geotagged photos", done: photosMissing.length === 0 },
+    { label: "Kit condition", done: kitDone },
+    { label: "Serials", done: serialsDone },
+    { label: "Handover PIN", done: pinDone },
+    { label: "POD signature", done: sigDone },
+  ].filter((s) => {
+    if (s.label === "Kit condition" && task.kind !== "delivery" && task.kind !== "return") return false;
+    if (s.label === "Serials" && (!task.items.length || task.kind === "inventory")) return false;
+    if ((s.label === "Handover PIN" || s.label === "POD signature") && task.kind !== "delivery" && task.kind !== "return")
+      return false;
+    return true;
+  });
+  const stepsLeft = steps.filter((s) => !s.done).length;
+
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
@@ -138,7 +166,17 @@ export default function TaskDetailScreen() {
         {task.beatWindow ? ` · ${task.beatWindow}` : ""} · due {formatWhen(task.scheduledFor)}
       </Muted>
 
+      {task.status !== "completed" ? (
+        <Card>
+          <Text style={styles.h}>Close-out · {stepsLeft === 0 ? "ready" : `${stepsLeft} left`}</Text>
+          {steps.map((s) => (
+            <StepRow key={s.label} label={s.label} done={s.done} />
+          ))}
+        </Card>
+      ) : null}
+
       <MiniMap
+        height={140}
         markers={[
           { id: "you", label: "You", color: colors.primary, point: you },
           { id: "store", label: "Store", color: colors.orange, point: task.store.geo },
@@ -147,12 +185,12 @@ export default function TaskDetailScreen() {
       />
 
       <Card>
-        <Text style={styles.h}>Distances</Text>
-        <Text>Store ↔ customer: {formatKm(storeCustKm)}</Text>
-        <Text>You → store: {formatKm(youStore)}</Text>
-        <Text>You → customer: {formatKm(youCust)}</Text>
+        <Text style={styles.h}>Navigate</Text>
+        <Text style={styles.distLine}>
+          Store ↔ customer {formatKm(storeCustKm)} · you → {nextLeg.label} {formatKm(nextLeg.km)}
+        </Text>
         <Button
-          label={`Navigate to ${nextLeg.label} (${formatKm(nextLeg.km)})`}
+          label={`Maps · ${nextLeg.label}`}
           variant="outline"
           onPress={() => void Linking.openURL(mapsDirUrl(you, nextLeg.place.geo))}
         />
@@ -165,12 +203,9 @@ export default function TaskDetailScreen() {
           {task.kind === "delivery" && task.status === "assigned" ? task.store.area : task.customerPlace.area}.
         </Muted>
         {task.checkedInAt ? (
-          <Muted>
-            Checked in {formatWhen(task.checkedInAt)}
-            {task.checkedInGeo
-              ? ` · ${formatCoord(task.checkedInGeo.lat)} , ${formatCoord(task.checkedInGeo.lng)}`
-              : ""}
-          </Muted>
+          <View style={styles.okBox}>
+            <Text style={styles.okTxt}>Checked in {formatWhen(task.checkedInAt)}</Text>
+          </View>
         ) : (
           <Button
             label="Check in with GPS"
@@ -194,21 +229,14 @@ export default function TaskDetailScreen() {
         <Card>
           <Text style={styles.h}>{task.kind === "delivery" ? "Kit condition · pickup" : "Kit condition · return"}</Text>
           <Muted>Good / scuff / dent / missing parts before the bag leaves or returns.</Muted>
-          {KIT_GRADES.map((g) => (
-            <Button
-              key={g.id}
-              label={g.label}
-              variant={kitGrade === g.id ? "primary" : "outline"}
-              onPress={() => setKitGrade(g.id)}
-            />
-          ))}
-          <Button label={kitScuff ? "Scuff noted" : "Mark scuff"} variant={kitScuff ? "primary" : "ghost"} onPress={() => setKitScuff((v) => !v)} />
-          <Button label={kitDent ? "Dent noted" : "Mark dent"} variant={kitDent ? "primary" : "ghost"} onPress={() => setKitDent((v) => !v)} />
-          <Button
-            label={kitMissing ? "Missing parts noted" : "Mark missing parts"}
-            variant={kitMissing ? "danger" : "ghost"}
-            onPress={() => setKitMissing((v) => !v)}
-          />
+          <ChipWrap>
+            {KIT_GRADES.map((g) => (
+              <Chip key={g.id} label={g.label} selected={kitGrade === g.id} onPress={() => setKitGrade(g.id)} />
+            ))}
+          </ChipWrap>
+          <CheckRow label="Scuff" checked={kitScuff} onToggle={() => setKitScuff((v) => !v)} />
+          <CheckRow label="Dent" checked={kitDent} onToggle={() => setKitDent((v) => !v)} />
+          <CheckRow label="Missing parts" checked={kitMissing} onToggle={() => setKitMissing((v) => !v)} />
           <TextInput value={kitNotes} onChangeText={setKitNotes} placeholder="Bag notes" style={styles.qty} />
           <Button
             label="Save kit condition"
@@ -236,14 +264,17 @@ export default function TaskDetailScreen() {
         <Card>
           <Text style={styles.h}>Failed attempt</Text>
           <Muted>NSZ, customer unavailable, kit refused, weather, vehicle, address — then retry.</Muted>
-          {(Object.keys(ATTEMPT_LABELS) as AttemptCode[]).map((code) => (
-            <Button
-              key={code}
-              label={ATTEMPT_LABELS[code]}
-              variant={attemptCode === code ? "primary" : "outline"}
-              onPress={() => setAttemptCode(code)}
-            />
-          ))}
+          <ChipWrap>
+            {(Object.keys(ATTEMPT_LABELS) as AttemptCode[]).map((code) => (
+              <Chip
+                key={code}
+                label={ATTEMPT_LABELS[code]}
+                selected={attemptCode === code}
+                tone={code === "nsz" || code === "kit_refused" ? "danger" : "default"}
+                onPress={() => setAttemptCode(code)}
+              />
+            ))}
+          </ChipWrap>
           <TextInput value={attemptNote} onChangeText={setAttemptNote} placeholder="What happened on this try?" style={styles.qty} />
           <Button
             label="Log failed attempt"
@@ -320,16 +351,19 @@ export default function TaskDetailScreen() {
       {task.kind === "address_verification" ? (
         <Card>
           <Text style={styles.h}>Address result</Text>
-          <Button
-            label="Matches booking"
-            variant={task.addressMatch === "match" ? "primary" : "outline"}
-            onPress={() => updateTask(task.id, { addressMatch: "match" })}
-          />
-          <Button
-            label="Does not match"
-            variant={task.addressMatch === "mismatch" ? "danger" : "outline"}
-            onPress={() => updateTask(task.id, { addressMatch: "mismatch" })}
-          />
+          <ChipWrap>
+            <Chip
+              label="Matches booking"
+              selected={task.addressMatch === "match"}
+              onPress={() => updateTask(task.id, { addressMatch: "match" })}
+            />
+            <Chip
+              label="Does not match"
+              selected={task.addressMatch === "mismatch"}
+              tone="danger"
+              onPress={() => updateTask(task.id, { addressMatch: "mismatch" })}
+            />
+          </ChipWrap>
         </Card>
       ) : null}
 
@@ -513,7 +547,11 @@ export default function TaskDetailScreen() {
         />
       ) : null}
       {task.status !== "completed" ? (
-        <Button label="Mark complete" variant={task.status === "assigned" ? "outline" : "primary"} onPress={complete} />
+        <Button
+          label={stepsLeft ? `Mark complete · ${stepsLeft} left` : "Mark complete"}
+          variant={task.status === "assigned" ? "outline" : "primary"}
+          onPress={complete}
+        />
       ) : (
         <Muted>Closed {task.completedAt ? formatWhen(task.completedAt) : ""}</Muted>
       )}
@@ -536,4 +574,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 8,
   },
+  distLine: { fontSize: 14, color: colors.ink, fontWeight: "600" },
+  okBox: {
+    backgroundColor: colors.successBg,
+    borderRadius: 10,
+    padding: 10,
+  },
+  okTxt: { color: "#047857", fontWeight: "700" },
 });

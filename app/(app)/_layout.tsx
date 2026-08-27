@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Tabs, router } from "expo-router";
-import { Home, ListChecks, Clock3, CalendarDays, Menu, Store } from "lucide-react-native";
+import { Home, ListChecks, Clock3, Menu, Store } from "lucide-react-native";
 import { useApp } from "@/lib/app-context";
 import { colors } from "@/constants/theme";
 import { t } from "@/lib/i18n";
@@ -65,8 +65,8 @@ export default function AppTabs() {
       <Tabs.Screen
         name="leave"
         options={{
+          href: null,
           title: t(lang, "leave"),
-          tabBarIcon: ({ color }) => <CalendarDays size={22} color={color} />,
         }}
       />
       <Tabs.Screen

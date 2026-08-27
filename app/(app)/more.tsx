@@ -51,7 +51,7 @@ export default function MoreScreen() {
           ))}
         </View>
       </Card>
-      <Button label={t(lang, "vendors")} variant="outline" onPress={() => router.push("/(app)/vendors")} />
+      <Button label={t(lang, "leave")} variant="outline" onPress={() => router.push("/(app)/leave")} />
       <Button label={t(lang, "hubTeam")} variant="outline" onPress={() => router.push("/hub" as Href)} />
       <Button label={t(lang, "expenses")} variant="outline" onPress={() => router.push("/expenses" as Href)} />
       <Button label={t(lang, "training")} variant="outline" onPress={() => router.push("/training" as Href)} />

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Card, Muted } from "@/components/ui";
+import { Chip } from "@/components/chips";
 import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
@@ -57,13 +58,7 @@ export default function TasksScreen() {
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
         {FILTERS.map((f) => (
-          <Pressable
-            key={f.id}
-            onPress={() => setKind(f.id)}
-            style={[styles.chip, kind === f.id && { backgroundColor: colors.primary }]}
-          >
-            <Text style={{ color: kind === f.id ? "#fff" : colors.text, fontWeight: "600", fontSize: 12 }}>{f.label}</Text>
-          </Pressable>
+          <Chip key={f.id} label={f.label} selected={kind === f.id} onPress={() => setKind(f.id)} />
         ))}
       </ScrollView>
       {list.length === 0 ? (
@@ -72,7 +67,6 @@ export default function TasksScreen() {
         </Card>
       ) : (
         list.map((t) => {
-          const dist = haversineKm(t.store.geo, t.customerPlace.geo);
           const youDist = live
             ? haversineKm(
                 live,
@@ -81,22 +75,26 @@ export default function TasksScreen() {
             : null;
           return (
             <Pressable key={t.id} onPress={() => router.push(`/(app)/tasks/${t.id}`)}>
-              <Card>
-                <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-                  <KindBadge kind={t.kind} />
-                  <StatusBadge status={t.status} />
-                  <SlaBadge task={t} />
-                  <Muted>{t.id}{t.beatSeq ? ` · beat ${t.beatSeq}` : ""}</Muted>
+              <Card accent={false}>
+                <View style={styles.jobRow}>
+                  <View style={styles.num}>
+                    <Text style={styles.numTxt}>{t.beatSeq ?? "–"}</Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={styles.body} numberOfLines={2}>
+                      {t.customerPlace.area} · {t.customerName}
+                    </Text>
+                    <Muted>
+                      {t.beatWindow ?? formatWhen(t.scheduledFor)}
+                      {youDist != null ? ` · ${formatKm(youDist)} away` : ""}
+                    </Muted>
+                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                      <KindBadge kind={t.kind} />
+                      <StatusBadge status={t.status} />
+                      <SlaBadge task={t} />
+                    </View>
+                  </View>
                 </View>
-                <Text style={styles.body}>{t.title}</Text>
-                <Muted>
-                  {t.customerName} · {t.customerPlace.area}
-                </Muted>
-                <Muted>
-                  Store–customer {formatKm(dist)}
-                  {youDist != null ? ` · you ${formatKm(youDist)}` : ""}
-                  {t.beatWindow ? ` · ${t.beatWindow}` : ` · ${formatWhen(t.scheduledFor)}`}
-                </Muted>
               </Card>
             </Pressable>
           );
@@ -121,5 +119,14 @@ const styles = StyleSheet.create({
   tabOn: { backgroundColor: colors.primary },
   tabText: { color: colors.text, fontWeight: "600" },
   tabOnText: { color: "#fff", fontWeight: "600" },
-  chip: { borderWidth: 1, borderColor: colors.peachBorder, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "#fff" },
+  jobRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  num: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  numTxt: { color: "#fff", fontWeight: "800" },
 });
