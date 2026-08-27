@@ -17,7 +17,8 @@ import {
   shiftIso,
   visitOutcomeLabel,
 } from "@/lib/vendor-onboard";
-import type { VendorVisitOutcome } from "@/lib/types";
+import { VendorProfileFields, clampServices } from "@/components/vendor-profile-fields";
+import type { VendorKind, VendorListing, VendorVisitOutcome } from "@/lib/types";
 
 const OUTCOMES: { id: VendorVisitOutcome; label: string }[] = [
   { id: "interested", label: "Interested" },
@@ -44,6 +45,17 @@ export default function VendorDetailScreen() {
   const [declineReason, setDeclineReason] = useState(vendor?.declineReason ?? "");
   const [nextMeetingAt, setNextMeetingAt] = useState(vendor?.nextMeetingAt ?? "");
   const [nextMeetingNote, setNextMeetingNote] = useState(vendor?.nextMeetingNote ?? "");
+  const [outletName, setOutletName] = useState(vendor?.name ?? "");
+  const [contactName, setContactName] = useState(vendor?.contact ?? "");
+  const [contactPhone, setContactPhone] = useState(vendor?.phone === "—" ? "" : (vendor?.phone ?? ""));
+  const [listing, setListing] = useState<VendorListing>(vendor?.listing ?? "business");
+  const [serviceTypes, setServiceTypes] = useState<VendorKind[]>(
+    (vendor?.serviceTypes as VendorKind[] | undefined)?.length
+      ? (vendor!.serviceTypes as VendorKind[])
+      : vendor?.kind
+        ? [vendor.kind]
+        : [],
+  );
 
   if (!vendor) {
     return (
@@ -69,7 +81,7 @@ export default function VendorDetailScreen() {
       note: note.trim(),
       intel: {
         gstin: gstin.trim(),
-        decisionMaker: decisionMaker.trim(),
+        decisionMaker: decisionMaker.trim() || contactName.trim(),
         competitor: competitor.trim(),
         ownedKit: ownedKit.trim(),
         nextShootDate: nextShoot.trim(),
@@ -77,6 +89,13 @@ export default function VendorDetailScreen() {
       declineReason: declineReason.trim() || undefined,
       nextMeetingAt: nextMeetingAt.trim() || undefined,
       nextMeetingNote: nextMeetingNote.trim() || undefined,
+      profile: {
+        name: outletName,
+        contact: contactName,
+        phone: contactPhone,
+        listing,
+        serviceTypes,
+      },
     });
     if (err) {
       Alert.alert("Could not log visit", err);
@@ -160,6 +179,22 @@ export default function VendorDetailScreen() {
       </Card>
       <Card>
         <Text style={styles.h}>Log onboarding visit</Text>
+        <Muted>Fill who they are and what they offer, then how they responded.</Muted>
+        <VendorProfileFields
+          name={outletName}
+          contact={contactName}
+          phone={contactPhone}
+          listing={listing}
+          serviceTypes={serviceTypes}
+          onName={setOutletName}
+          onContact={setContactName}
+          onPhone={setContactPhone}
+          onListing={(next) => {
+            setListing(next);
+            setServiceTypes(clampServices(next, serviceTypes));
+          }}
+          onServices={setServiceTypes}
+        />
         <Muted>How did they respond to joining Camartes?</Muted>
         <ChipWrap>
           {OUTCOMES.map((o) => (
@@ -202,7 +237,7 @@ export default function VendorDetailScreen() {
         {outcome !== "courtesy" && outcome !== "not_interested" ? (
           <>
             <Field label="GSTIN" value={gstin} onChangeText={setGstin} placeholder="Required except courtesy / not interested" />
-            <Field label="Decision maker" value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Name / role" />
+            <Field label="Decision maker" value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Name / role — defaults to contact person" />
             <Field label="Competitor in use" value={competitor} onChangeText={setCompetitor} placeholder="Who they work with today" />
             <Field label="Owned kit" value={ownedKit} onChangeText={setOwnedKit} placeholder="Bodies / lights they already own" />
             <Field label="Next shoot date" value={nextShoot} onChangeText={setNextShoot} placeholder="YYYY-MM-DD or week" />

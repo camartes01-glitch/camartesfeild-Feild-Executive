@@ -13,6 +13,7 @@ import * as Location from "expo-location";
 import { format } from "date-fns";
 import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, USERS } from "@/lib/seed";
 import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
+import { primaryService } from "@/lib/camartes-services";
 import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
 import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
@@ -36,6 +37,7 @@ import type {
   Vendor,
   VendorIntel,
   VendorKind,
+  VendorListing,
   VendorVisit,
   VendorVisitOutcome,
 } from "@/lib/types";
@@ -99,6 +101,13 @@ type AppContextValue = {
     declineReason?: string;
     nextMeetingAt?: string;
     nextMeetingNote?: string;
+    profile: {
+      name: string;
+      contact: string;
+      phone: string;
+      listing: VendorListing;
+      serviceTypes: VendorKind[];
+    };
   }) => string | null;
   addWalkInVendor: (input: {
     name: string;
@@ -106,7 +115,8 @@ type AppContextValue = {
     phone: string;
     area: string;
     address: string;
-    kind: VendorKind;
+    listing: VendorListing;
+    serviceTypes: VendorKind[];
   }) => string | null;
   onboardVendor: (vendorId: string) => string;
   triggerSos: () => void;
@@ -779,10 +789,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       declineReason?: string;
       nextMeetingAt?: string;
       nextMeetingNote?: string;
+      profile: {
+        name: string;
+        contact: string;
+        phone: string;
+        listing: VendorListing;
+        serviceTypes: VendorKind[];
+      };
     }) => {
       const vendor = state.vendors.find((v) => v.id === input.vendorId);
       if (!vendor) return "Vendor not found.";
       const outcome = normalizeOutcome(input.outcome);
+      if (!input.profile.name.trim()) return "Outlet name is required.";
+      if (!input.profile.contact.trim()) return "Contact person is required.";
+      if (!input.profile.serviceTypes.length) return "Select at least one service they offer.";
       if (outcome === "not_interested" && !input.declineReason?.trim()) {
         return "Reason is mandatory when they are not interested.";
       }
@@ -817,6 +837,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         outcome === "not_interested" || outcome === "onboarded"
           ? input.nextMeetingAt?.trim() || undefined
           : input.nextMeetingAt?.trim() || vendor.nextMeetingAt;
+      const listing = input.profile.listing;
+      const serviceTypes = input.profile.serviceTypes;
+      const kind = primaryService(serviceTypes, listing);
       setState((s) => ({
         ...s,
         vendorVisits: [visit, ...s.vendorVisits],
@@ -824,6 +847,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           v.id === input.vendorId
             ? {
                 ...v,
+                name: input.profile.name.trim(),
+                contact: input.profile.contact.trim(),
+                phone: input.profile.phone.trim() || v.phone,
+                listing,
+                serviceTypes,
+                kind,
                 onboarding: true,
                 interest,
                 status: v.status === "onboarded" ? v.status : nextStatus,
@@ -855,8 +884,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : t,
         ),
       }));
-      audit(`Vendor visit ${vendor.name} · ${interest}${onSite ? " · on site" : " · off site"}`);
-      queueIfOffline(`Vendor visit ${vendor.name}`);
+      audit(`Vendor visit ${input.profile.name.trim()} · ${interest}${onSite ? " · on site" : " · off site"}`);
+      queueIfOffline(`Vendor visit ${input.profile.name.trim()}`);
       return null;
     },
     [state.vendors, live, audit, queueIfOffline],
@@ -888,16 +917,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       phone: string;
       area: string;
       address: string;
-      kind: VendorKind;
+      listing: VendorListing;
+      serviceTypes: VendorKind[];
     }) => {
       if (!input.name.trim() || !input.contact.trim()) return null;
+      if (!input.serviceTypes.length) return null;
       const geo = live
         ? { lat: live.lat, lng: live.lng }
         : { lat: 17.4126, lng: 78.4483 };
+      const listing = input.listing;
+      const serviceTypes = input.serviceTypes;
       const vendor: Vendor = {
         id: `vn-walkin-${Date.now()}`,
-        kind: input.kind,
-        listing: "business",
+        kind: primaryService(serviceTypes, listing),
+        listing,
         source: "field",
         name: input.name.trim(),
         contact: input.contact.trim(),
@@ -909,7 +942,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         status: "prospect",
         interest: "to_meet",
         onboarding: true,
-        serviceTypes: [input.kind],
+        serviceTypes,
         notes: "Walk-in logged by field executive for Camartes onboarding.",
         geoApprox: !live,
       };

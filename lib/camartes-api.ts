@@ -379,6 +379,12 @@ export function overlayVendorState(fresh: Vendor[], previous: Vendor[]): Vendor[
       ownedKit: old.ownedKit ?? v.ownedKit,
       nextShootDate: old.nextShootDate ?? v.nextShootDate,
       declineReason: old.declineReason ?? v.declineReason,
+      name: old.onboarding ? old.name : v.name,
+      contact: old.onboarding ? old.contact : v.contact,
+      phone: old.onboarding ? old.phone : v.phone,
+      listing: old.onboarding ? old.listing : v.listing,
+      serviceTypes: old.onboarding && old.serviceTypes?.length ? old.serviceTypes : v.serviceTypes,
+      kind: old.onboarding ? old.kind : v.kind,
     };
   });
   const extras = previous

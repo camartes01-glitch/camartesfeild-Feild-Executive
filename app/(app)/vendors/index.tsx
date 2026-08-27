@@ -15,18 +15,10 @@ import {
   formatMeeting,
   isOnboardingLead,
 } from "@/lib/vendor-onboard";
-import { VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
-import type { OnboardInterest, VendorKind } from "@/lib/types";
-
-const KINDS: VendorKind[] = [
-  "photography_firm",
-  "photographer",
-  "videographer",
-  "album_designer",
-  "led_wall",
-  "web_live_services",
-  "camera_rental",
-];
+import { VendorProfileFields, clampServices } from "@/components/vendor-profile-fields";
+import { LISTING_LABEL, VENDOR_KIND_LABEL } from "@/lib/vendors-seed";
+import { SERVICE_TYPE_LABEL } from "@/lib/camartes-services";
+import type { OnboardInterest, VendorKind, VendorListing } from "@/lib/types";
 
 export default function VendorsScreen() {
   const { state, live, addWalkInVendor } = useApp();
@@ -37,7 +29,8 @@ export default function VendorsScreen() {
   const [contact, setContact] = useState("");
   const [phone, setPhone] = useState("");
   const [area, setArea] = useState("");
-  const [kind, setKind] = useState<VendorKind>("photography_firm");
+  const [listing, setListing] = useState<VendorListing>("business");
+  const [serviceTypes, setServiceTypes] = useState<VendorKind[]>([]);
 
   const pipeline = useMemo(
     () => state.vendors.filter(isOnboardingLead),
@@ -81,16 +74,18 @@ export default function VendorsScreen() {
       phone,
       area,
       address: area,
-      kind,
+      listing,
+      serviceTypes,
     });
     if (!id) {
-      Alert.alert("Could not add", "Name and contact are required.");
+      Alert.alert("Could not add", "Name, contact person, and at least one service are required.");
       return;
     }
     setName("");
     setContact("");
     setPhone("");
     setArea("");
+    setServiceTypes([]);
     setAdding(false);
     router.push(`/(app)/vendors/${id}`);
   }
@@ -154,8 +149,13 @@ export default function VendorsScreen() {
                 <Badge label={INTEREST_LABEL[interest]} tone={badgeTone(interest)} />
               </View>
               <Muted>
-                {v.contact} · {VENDOR_KIND_LABEL[v.kind] ?? v.kind} · {v.area} · {formatKm(v.km)}
+                {LISTING_LABEL[v.listing]} · {v.contact} · {v.area} · {formatKm(v.km)}
               </Muted>
+              {v.serviceTypes?.length ? (
+                <Muted>{v.serviceTypes.map((s) => SERVICE_TYPE_LABEL[s] ?? s).join(" · ")}</Muted>
+              ) : (
+                <Muted>{VENDOR_KIND_LABEL[v.kind] ?? v.kind}</Muted>
+              )}
               <Muted>
                 {next ? `Next meeting · ${next}` : "No next meeting scheduled"}
                 {v.nextMeetingNote ? ` · ${v.nextMeetingNote}` : ""}
@@ -168,15 +168,22 @@ export default function VendorsScreen() {
       {adding ? (
         <Card>
           <Text style={styles.body}>Log a walk-in you just met</Text>
-          <Field label="Outlet / name" value={name} onChangeText={setName} placeholder="Studio or freelancer name" />
-          <Field label="Person you met" value={contact} onChangeText={setContact} placeholder="Decision maker" />
-          <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+          <VendorProfileFields
+            name={name}
+            contact={contact}
+            phone={phone}
+            listing={listing}
+            serviceTypes={serviceTypes}
+            onName={setName}
+            onContact={setContact}
+            onPhone={setPhone}
+            onListing={(next) => {
+              setListing(next);
+              setServiceTypes(clampServices(next, serviceTypes));
+            }}
+            onServices={setServiceTypes}
+          />
           <Field label="Area" value={area} onChangeText={setArea} placeholder="Banjara Hills" />
-          <ChipWrap>
-            {KINDS.map((k) => (
-              <Chip key={k} label={VENDOR_KIND_LABEL[k]} selected={kind === k} onPress={() => setKind(k)} />
-            ))}
-          </ChipWrap>
           <Button label="Save to onboarding book" onPress={saveWalkIn} />
           <Button label="Cancel" variant="ghost" onPress={() => setAdding(false)} />
         </Card>
