@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * Serve the Expo static export with extensionless HTML routes,
- * so /attendance and tab URLs work in the Cursor preview iframe.
+ * Serve the Expo static export for Cursor Preview (127.0.0.1).
+ * Extensionless routes (/attendance, /hours) map to HTML files.
+ * Gzip is off by default — the Preview proxy mishandles it on HEAD checks.
  */
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const zlib = require("zlib");
 
 const ROOT = path.resolve(__dirname, "..", "dist");
-const PORT = Number(process.env.PORT || 43172);
-const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Number(process.env.PORT || 43156);
+const HOST = process.env.HOST || "127.0.0.1";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -33,7 +33,7 @@ const ALIAS = {
 };
 
 function safeJoin(urlPath) {
-  const decoded = decodeURIComponent(urlPath.split("?")[0].split("#")[0]);
+  const decoded = decodeURIComponent((urlPath || "/").split("?")[0].split("#")[0]);
   const rel = ALIAS[decoded] || decoded;
   const full = path.normalize(path.join(ROOT, rel));
   if (!full.startsWith(ROOT)) return null;
@@ -53,28 +53,25 @@ function pickFile(urlPath) {
 const server = http.createServer((req, res) => {
   const file = pickFile(req.url || "/");
   const ext = path.extname(file).toLowerCase();
-  const type = TYPES[ext] || "application/octet-stream";
-  res.setHeader("Content-Type", type);
+  res.setHeader("Content-Type", TYPES[ext] || "application/octet-stream");
   res.setHeader("Cache-Control", ext === ".html" ? "no-store" : "public, max-age=60");
   res.setHeader("Access-Control-Allow-Origin", "*");
+  if (req.method === "HEAD" || req.method === "OPTIONS") {
+    res.statusCode = 200;
+    res.end();
+    return;
+  }
   fs.readFile(file, (err, data) => {
     if (err) {
       res.statusCode = 404;
       res.end("Not found");
       return;
     }
-    const wantsGzip = (req.headers["accept-encoding"] || "").includes("gzip");
-    if (wantsGzip && (ext === ".js" || ext === ".html" || ext === ".css" || ext === ".json")) {
-      data = zlib.gzipSync(data);
-      res.setHeader("Content-Encoding", "gzip");
-      res.setHeader("Vary", "Accept-Encoding");
-    }
-    res.setHeader("Content-Length", data.length);
     res.statusCode = 200;
     res.end(data);
   });
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Camartes Field static preview http://${HOST}:${PORT}`);
+  console.log(`Camartes Field preview http://${HOST}:${PORT}`);
 });
