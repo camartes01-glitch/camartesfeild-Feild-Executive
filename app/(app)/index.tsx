@@ -1,5 +1,7 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { useState } from "react";
+import { Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Href, router } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { Button, Card, Muted, Title } from "@/components/ui";
 import { KindBadge, StatusBadge } from "@/components/task-badges";
 import { MiniMap } from "@/components/mini-map";
@@ -7,49 +9,109 @@ import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { formatKm, haversineKm, pathKm } from "@/lib/geo";
 import { formatDuration, monthStats, shiftMinutes } from "@/lib/hours";
-import { LOCATION_PRESETS } from "@/lib/seed";
+import { LOCATION_PRESETS, TEAM } from "@/lib/seed";
+import { t } from "@/lib/i18n";
 
 export default function HomeScreen() {
-  const { user, state, live, locationMode, setLocationMode, clockIn, clockOut, openShift } = useApp();
+  const {
+    user,
+    state,
+    live,
+    online,
+    locationMode,
+    setLocationMode,
+    clockIn,
+    clockOut,
+    openShift,
+    triggerSos,
+    markNoticesRead,
+  } = useApp();
+  const lang = state.language;
   const openTasks = state.tasks.filter((t) => t.status !== "completed");
   const next = openTasks[0];
   const stats = monthStats(state.shifts);
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
   const today = new Date().toISOString().slice(0, 10);
   const todayKm = pathKm(state.pings.filter((p) => p.at.slice(0, 10) === today));
+  const unread = state.notices.filter((n) => !n.read).length;
+  const [override, setOverride] = useState("");
+  const [geoError, setGeoError] = useState(false);
+
+  async function doClockIn() {
+    let selfieUri: string | undefined;
+    if (Platform.OS !== "web") {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (perm.granted) {
+        const shot = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, quality: 0.4 });
+        selfieUri = shot.assets?.[0]?.uri;
+      }
+    }
+    const err = clockIn({ selfieUri: selfieUri ?? (Platform.OS === "web" ? "web-selfie" : undefined), overrideReason: override });
+    if (err === "geofence") setGeoError(true);
+    else setGeoError(false);
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Muted>Hyderabad hub</Muted>
-      <Title>Hello, {user?.name.split(" ")[0]}</Title>
+      {!online ? (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>{t(lang, "offline")}</Text>
+        </View>
+      ) : null}
+      <Muted>{t(lang, "hyderabadHub")}</Muted>
+      <Title>
+        {t(lang, "hello")}, {user?.name.split(" ")[0]}
+      </Title>
+      <Text style={styles.emp}>
+        {user?.employeeId} · {user?.employment}
+      </Text>
+
+      <View style={styles.row}>
+        <Button flex={1} label={t(lang, "sos")} variant="danger" onPress={triggerSos} />
+        <Button
+          flex={1}
+          label={`${t(lang, "notifications")}${unread ? ` (${unread})` : ""}`}
+          variant="outline"
+          onPress={markNoticesRead}
+        />
+      </View>
+
+      {state.notices.filter((n) => !n.read).slice(0, 2).map((n) => (
+        <Card key={n.id}>
+          <Text style={styles.h}>{n.title}</Text>
+          <Muted>{n.body}</Muted>
+        </Card>
+      ))}
 
       <Card>
-        <Text style={styles.h}>Live location</Text>
+        <Text style={styles.h}>{t(lang, "liveLocation")}</Text>
+        <Muted>{t(lang, "trackingOnShift")}</Muted>
         <MiniMap
           markers={[
             { id: "you", label: "You", color: colors.primary, point: you },
-            ...(next
-              ? [
-                  { id: "store", label: "Store", color: colors.orange, point: next.store.geo },
-                  { id: "cust", label: "Customer", color: colors.success, point: next.customerPlace.geo },
-                ]
-              : []),
+            ...TEAM.filter((m) => m.id !== user?.id).map((m) => ({
+              id: m.id,
+              label: m.name.split(" ")[0],
+              color: colors.orange,
+              point: m.geo,
+            })),
           ]}
         />
         <Muted>
-          {live
-            ? `${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} · ±${Math.round(live.accuracyM)} m · ${live.source}`
-            : "Allow location, or simulate a Hyderabad pin."}
+          {openShift
+            ? live
+              ? `${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} · ±${Math.round(live.accuracyM)} m`
+              : "Getting fix…"
+            : "Clock in to start GPS tracking."}
         </Muted>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {LOCATION_PRESETS.map((p) => {
             const id = p.id === "live" ? "gps" : p.id;
-            const on = locationMode === id;
             return (
               <Button
                 key={p.id}
                 label={p.label}
-                variant={on ? "primary" : "outline"}
+                variant={locationMode === id ? "primary" : "outline"}
                 onPress={() => setLocationMode(id)}
               />
             );
@@ -58,55 +120,60 @@ export default function HomeScreen() {
       </Card>
 
       <Card>
-        <Text style={styles.h}>Attendance</Text>
+        <Text style={styles.h}>{openShift ? t(lang, "onShift") : t(lang, "offShift")}</Text>
         <Text style={styles.body}>
-          {openShift ? `On shift · ${formatDuration(shiftMinutes(openShift))}` : "Off shift"}
+          {openShift ? formatDuration(shiftMinutes(openShift)) : `${stats.days} days · ${formatDuration(stats.minutes)}`}
         </Text>
-        <Muted>
-          {stats.days} days · {formatDuration(stats.minutes)} this month
-        </Muted>
-        {openShift ? (
-          <Button label="Clock out" variant="outline" onPress={clockOut} />
+        {geoError ? (
+          <>
+            <Muted>{t(lang, "geofenceFail")}</Muted>
+            <TextInput
+              placeholder="Override reason (traffic, GPS error…)"
+              value={override}
+              onChangeText={setOverride}
+              style={styles.input}
+            />
+          </>
         ) : (
-          <Button label="Clock in" onPress={clockIn} />
+          <Muted>{t(lang, "selfieNeeded")}</Muted>
+        )}
+        {openShift ? (
+          <Button label={t(lang, "clockOut")} variant="outline" onPress={clockOut} />
+        ) : (
+          <Button label={t(lang, "clockIn")} onPress={() => void doClockIn()} />
         )}
       </Card>
 
-      <View style={styles.row}>
-        <Stat label="Open tasks" value={String(openTasks.length)} />
-        <Stat label="Km today" value={formatKm(todayKm)} />
-        <Stat label="Emp ID" value={user?.employeeId ?? "—"} />
+      <View style={styles.stats}>
+        <Stat label="Open" value={String(openTasks.length)} />
+        <Stat label="Km" value={formatKm(todayKm)} />
+        <Stat label="Team" value={String(TEAM.length)} />
       </View>
+
+      <Card>
+        <Text style={styles.h}>{t(lang, "route")}</Text>
+        {openTasks.map((task, i) => (
+          <Muted key={task.id}>
+            {i + 1}. {task.customerPlace.area} · {task.bookingRef}
+          </Muted>
+        ))}
+        <Button label={t(lang, "hubTeam")} variant="ghost" onPress={() => router.push("/hub" as Href)} />
+      </Card>
 
       {next ? (
         <Card>
-          <Text style={styles.h}>Next stop</Text>
+          <Text style={styles.h}>{t(lang, "nextStop")}</Text>
           <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
             <KindBadge kind={next.kind} />
             <StatusBadge status={next.status} />
           </View>
           <Text style={styles.body}>{next.title}</Text>
-          <Muted>{next.customerPlace.address}</Muted>
           <Muted>
             Store → customer {formatKm(haversineKm(next.store.geo, next.customerPlace.geo))}
-            {live
-              ? ` · you → next ${formatKm(
-                  haversineKm(
-                    live,
-                    next.kind === "return" || next.kind === "address_verification"
-                      ? next.customerPlace.geo
-                      : next.store.geo,
-                  ),
-                )}`
-              : ""}
           </Muted>
-          <Button label="Open task" onPress={() => router.push(`/(app)/tasks/${next.id}`)} />
+          <Button label={t(lang, "openTask")} onPress={() => router.push(`/(app)/tasks/${next.id}`)} />
         </Card>
-      ) : (
-        <Card>
-          <Muted>No open tasks. Check inventory or review leave.</Muted>
-        </Card>
-      )}
+      ) : null}
     </ScrollView>
   );
 }
@@ -121,9 +188,27 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 40 },
-  h: { fontSize: 16, fontWeight: "700", color: colors.text },
-  body: { fontSize: 15, fontWeight: "600", color: colors.text },
+  wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 48 },
+  h: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  body: { fontSize: 15, fontWeight: "700", color: colors.ink },
+  emp: { color: colors.primaryDark, fontWeight: "700" },
   row: { flexDirection: "row", gap: 8 },
-  stat: { flex: 1, borderWidth: 1, borderColor: colors.peachBorder, borderRadius: 12, padding: 10, backgroundColor: colors.white },
+  stats: { flexDirection: "row", gap: 8 },
+  stat: {
+    flex: 1,
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+  },
+  banner: { backgroundColor: colors.ink, borderRadius: 12, padding: 10 },
+  bannerText: { color: colors.white, fontWeight: "700", fontSize: 12 },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: colors.cream,
+  },
 });

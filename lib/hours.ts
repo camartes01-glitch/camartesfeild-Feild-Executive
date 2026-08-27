@@ -1,5 +1,5 @@
 import type { LeaveRequest, Shift } from "@/lib/types";
-import { differenceInMinutes, format, parseISO, startOfMonth } from "date-fns";
+import { differenceInCalendarDays, differenceInMinutes, format, parseISO, startOfMonth } from "date-fns";
 
 export function shiftMinutes(shift: Shift, now = new Date()) {
   const start = parseISO(shift.clockIn);
@@ -25,6 +25,18 @@ export function monthStats(shifts: Shift[], month = new Date()) {
 export function leaveDaysUsed(leaves: LeaveRequest[]) {
   return leaves
     .filter((l) => l.status === "approved")
+    .reduce((acc, l) => acc + l.days, 0);
+}
+
+export function calendarDaysInclusive(from: string, to: string) {
+  const a = parseISO(from.length > 10 ? from : `${from}T00:00:00`);
+  const b = parseISO(to.length > 10 ? to : `${to}T00:00:00`);
+  return Math.max(1, differenceInCalendarDays(b, a) + 1);
+}
+
+export function leaveUsedByType(leaves: LeaveRequest[], type: LeaveRequest["type"]) {
+  return leaves
+    .filter((l) => l.type === type && l.status === "approved")
     .reduce((acc, l) => acc + l.days, 0);
 }
 

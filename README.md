@@ -1,8 +1,17 @@
-# Camartes Field (React Native)
+# Camartes Field
 
-Field executive app for [camartes.com](https://camartes.com) staff in Hyderabad: address verification, kit pickup/delivery, returns, store inventory, live location, attendance, leave, and geotagged photos.
+Employee app for [Camartes](https://camartes.com) field executives at the Hyderabad hubs (Banjara Hills and HITEC City). Everyone who signs in is a Camartes employee — not a gig worker.
 
-Brand colors: `#FF6B35` orange on `#FFF7ED` cream.
+Brand: orange `#FF6B35` on cream `#FFF7ED`, matching camartes.com.
+
+## What it does
+
+- Clock in with selfie and a 250 m hub geofence (override with a reason)
+- GPS trail only while you are on shift
+- Address verification, store pickup → customer delivery, customer return → store, hub inventory
+- Customer OTP, serial match, WhatsApp updates, damage notes, geotagged photos
+- Hours, roster, overtime, HR leave balances (casual / sick / earned)
+- Hub team map, travel expenses, kit-care training, SOS to the hub, English / Hindi / Telugu
 
 ## Run
 
@@ -11,34 +20,24 @@ npm install
 npx expo start
 ```
 
-Then:
-
-- press `w` for web preview
-- scan the QR code with **Expo Go** on Android or iOS
-- `npx expo start --android` / `--ios` for a simulator
+Scan the QR with **Expo Go**, or:
 
 ```bash
 npx expo start --web --port 43148
 ```
 
-## Demo login
+## Demo logins
 
-| Email | Password |
-| --- | --- |
-| `rahul@camartes.com` | `field2026` |
-| `priya@camartes.com` | `field2026` |
+Password for all: `field2026`
 
-If GPS is unavailable, set **Location source** on Home to a Hyderabad hub or customer pin.
+- `rahul@camartes.com` (CM-FE-104)
+- `priya@camartes.com` (CM-FE-109)
+- `arjun@camartes.com` (CM-FE-112)
 
-## Android / iOS binary
+Delivery OTP on BK-88244: **4821**. Return OTP on BK-87901: **9033**.
 
-```bash
-npx expo prebuild
-npx expo run:android
-```
-
-Or use [EAS Build](https://docs.expo.dev/build/setup/). This is a debug/demo app, not a Play Store release.
+If device GPS is unavailable, pick **Banjara Hills hub** on Home so punch-in is inside the geofence.
 
 ## Stack
 
-Expo SDK 57, Expo Router, React Native, expo-location, expo-image-picker, AsyncStorage.
+Expo SDK 57, Expo Router, React Native, expo-location, expo-image-picker, NetInfo, AsyncStorage.

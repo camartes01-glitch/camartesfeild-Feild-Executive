@@ -5,6 +5,7 @@ import type {
   LeaveRequest,
   Place,
   Shift,
+  TeamMate,
 } from "@/lib/types";
 
 export const BANJARA: Place = {
@@ -81,6 +82,7 @@ export const USERS: FieldUser[] = [
     role: "Field Executive",
     hub: "Hyderabad",
     avatarInitials: "RS",
+    employment: "Camartes employee",
   },
   {
     id: "fe-priya",
@@ -92,6 +94,19 @@ export const USERS: FieldUser[] = [
     role: "Field Executive",
     hub: "Hyderabad",
     avatarInitials: "PN",
+    employment: "Camartes employee",
+  },
+  {
+    id: "fe-arjun",
+    name: "Arjun Reddy",
+    email: "arjun@camartes.com",
+    password: "field2026",
+    phone: "+91 90000 44123",
+    employeeId: "CM-FE-112",
+    role: "Field Executive",
+    hub: "Hyderabad",
+    avatarInitials: "AR",
+    employment: "Camartes employee",
   },
 ];
 
@@ -160,6 +175,9 @@ const TASKS: FieldTask[] = [
     timeline: [
       event("e1", "2026-08-26T07:12:00+05:30", "Kit reserved at Banjara hub"),
     ],
+    otpCode: "4821",
+    scannedSerials: [],
+    slaMinutes: 90,
   },
   {
     id: "TSK-4813",
@@ -194,6 +212,9 @@ const TASKS: FieldTask[] = [
     timeline: [
       event("e1", "2026-08-25T18:40:00+05:30", "Return window confirmed"),
     ],
+    otpCode: "9033",
+    scannedSerials: [],
+    slaMinutes: 75,
   },
   {
     id: "TSK-4814",
@@ -372,12 +393,93 @@ const LEAVES: LeaveRequest[] = [
 export function createInitialState(): AppState {
   return {
     userId: null,
+    language: "en",
+    deviceBoundId: null,
     tasks: structuredClone(TASKS),
     shifts: structuredClone(SHIFTS),
     leaves: structuredClone(LEAVES),
     pings: [],
+    damages: [],
+    expenses: [
+      {
+        id: "EX-01",
+        date: "2026-08-25",
+        km: 18.4,
+        amountInr: 220,
+        note: "Auto Banjara → Kondapur delivery",
+        status: "approved",
+      },
+    ],
+    audit: [{ id: "a0", at: "2026-08-26T07:00:00+05:30", label: "Hyderabad hub roster published" }],
+    offlineQueue: [],
+    notices: [
+      {
+        id: "n1",
+        title: "Wedding kit SLA",
+        body: "BK-88244 Meera Films must be on site by 12:00. OTP 4821.",
+        at: "2026-08-26T07:15:00+05:30",
+        read: false,
+      },
+      {
+        id: "n2",
+        title: "Leave",
+        body: "Your Onam leave (10–11 Sep) is approved.",
+        at: "2026-08-08T10:00:00+05:30",
+        read: true,
+      },
+    ],
+    training: [
+      {
+        id: "tr1",
+        title: "Aputure 600d — transport",
+        body: "Always cap the COB, lock the yoke, never lay the head on the LED.",
+        done: false,
+      },
+      {
+        id: "tr2",
+        title: "Gimbal handover",
+        body: "Balance check on site. Note any bent axis before the customer signs OTP.",
+        done: true,
+      },
+    ],
+    leavePolicy: { casual: 6, sick: 6, earned: 12 },
   };
 }
+
+export const TEAM: TeamMate[] = [
+  {
+    id: "fe-rahul",
+    name: "Rahul Sharma",
+    employeeId: "CM-FE-104",
+    status: "on_task",
+    area: "Banjara Hills",
+    geo: BANJARA.geo,
+  },
+  {
+    id: "fe-priya",
+    name: "Priya Nair",
+    employeeId: "CM-FE-109",
+    status: "on_shift",
+    area: "HITEC City",
+    geo: HITEC.geo,
+  },
+  {
+    id: "fe-arjun",
+    name: "Arjun Reddy",
+    employeeId: "CM-FE-112",
+    status: "on_task",
+    area: "Madhapur",
+    geo: { lat: 17.4486, lng: 78.3908 },
+  },
+];
+
+export const ROSTER: { date: string; window: string; hub: string }[] = [
+  { date: "2026-08-26", window: "09:00–18:00", hub: "Banjara Hills" },
+  { date: "2026-08-27", window: "09:00–18:00", hub: "HITEC City" },
+  { date: "2026-08-28", window: "Off / pending leave", hub: "—" },
+  { date: "2026-08-29", window: "09:00–18:00", hub: "Banjara Hills" },
+  { date: "2026-08-31", window: "10:00–19:00 (wedding OT)", hub: "HITEC City" },
+];
 
 export const LOCATION_PRESETS: { id: string; label: string; lat: number; lng: number }[] =
   [

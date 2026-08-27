@@ -1,128 +1,121 @@
-import { useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { differenceInCalendarDays, format, parseISO } from "date-fns";
-import { Badge, Button, Card, Muted, Title } from "@/components/ui";
+import { useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Button, Card, Field, Muted, Title } from "@/components/ui";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
-import { leaveDaysUsed } from "@/lib/hours";
-import type { LeaveType } from "@/lib/types";
+import { calendarDaysInclusive, formatDay, leaveUsedByType } from "@/lib/hours";
+import { t } from "@/lib/i18n";
+import type { LeavePolicy } from "@/lib/types";
 
-const ALLOWANCE = 18;
-const TYPES: LeaveType[] = ["casual", "sick", "earned", "unpaid"];
+const TYPES: Array<keyof LeavePolicy> = ["casual", "sick", "earned"];
 
 export default function LeaveScreen() {
   const { state, requestLeave } = useApp();
-  const [type, setType] = useState<LeaveType>("casual");
-  const [from, setFrom] = useState("2026-08-29");
-  const [to, setTo] = useState("2026-08-29");
+  const lang = state.language;
+  const [type, setType] = useState<keyof LeavePolicy>("casual");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [reason, setReason] = useState("");
-  const used = leaveDaysUsed(state.leaves);
-  const pending = state.leaves.filter((l) => l.status === "pending").reduce((a, l) => a + l.days, 0);
+  const [err, setErr] = useState("");
 
-  const leaveDates = useMemo(() => {
-    const set = new Set<string>();
-    for (const l of state.leaves) {
-      if (l.status === "rejected") continue;
-      const start = parseISO(l.from);
-      const end = parseISO(l.to);
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        set.add(format(d, "yyyy-MM-dd"));
-      }
-    }
-    return set;
-  }, [state.leaves]);
+  const remaining = (lt: keyof LeavePolicy) => state.leavePolicy[lt] - leaveUsedByType(state.leaves, lt);
 
-  function submit() {
-    const start = parseISO(from);
-    const end = parseISO(to);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      Alert.alert("Dates", "Use YYYY-MM-DD.");
+  const submit = () => {
+    setErr("");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      setErr("Use YYYY-MM-DD");
       return;
     }
-    const days = differenceInCalendarDays(end, start) + 1;
-    if (days < 1) {
-      Alert.alert("Dates", "End date must be on or after start.");
+    if (to < from) {
+      setErr("End date before start");
       return;
     }
-    if (!reason.trim()) {
-      Alert.alert("Reason", "Add a short reason for dispatch.");
+    const days = calendarDaysInclusive(from, to);
+    if (remaining(type) - days < 0) {
+      setErr(`Only ${remaining(type)} ${type} days left this year.`);
       return;
     }
-    requestLeave({ type, from, to, days, reason: reason.trim() });
+    requestLeave({ type, from, to, days, reason: reason.trim() || "Personal" });
+    setFrom("");
+    setTo("");
     setReason("");
-    Alert.alert("Sent", "Leave request sent to hub manager.");
-  }
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Title>Leave planner</Title>
-      <Muted>
-        {used} approved days used of {ALLOWANCE}. {pending} day(s) pending.
-      </Muted>
-      <Card>
-        <Text style={styles.h}>Worked vs leave</Text>
-        <Muted>Worked days: {state.shifts.length}. Leave days marked: {leaveDates.size}.</Muted>
-      </Card>
+      <Title>{t(lang, "leave")}</Title>
+      <Muted>{t(lang, "leaveBalance")}</Muted>
+      <View style={styles.stats}>
+        <Stat label="Casual" value={String(remaining("casual"))} hint={`of ${state.leavePolicy.casual}`} />
+        <Stat label="Sick" value={String(remaining("sick"))} hint={`of ${state.leavePolicy.sick}`} />
+        <Stat label="Earned" value={String(remaining("earned"))} hint={`of ${state.leavePolicy.earned}`} />
+      </View>
       <Card>
         <Text style={styles.h}>New request</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {TYPES.map((t) => (
-            <Pressable
-              key={t}
-              onPress={() => setType(t)}
-              style={[styles.chip, type === t && { backgroundColor: colors.primary }]}
-            >
-              <Text style={{ color: type === t ? "#fff" : colors.text, textTransform: "capitalize" }}>{t}</Text>
+        <View style={styles.chips}>
+          {TYPES.map((lt) => (
+            <Pressable key={lt} onPress={() => setType(lt)} style={[styles.chip, type === lt && styles.chipOn]}>
+              <Text style={[styles.chipTxt, type === lt && styles.chipTxtOn]}>{lt}</Text>
             </Pressable>
           ))}
         </View>
-        <TextInput value={from} onChangeText={setFrom} placeholder="From YYYY-MM-DD" style={styles.input} />
-        <TextInput value={to} onChangeText={setTo} placeholder="To YYYY-MM-DD" style={styles.input} />
-        <TextInput
-          value={reason}
-          onChangeText={setReason}
-          placeholder="Why you need the day off"
-          style={[styles.input, { minHeight: 70 }]}
-          multiline
-        />
-        <Button label="Submit request" onPress={submit} />
+        <Field label="From" value={from} onChangeText={setFrom} placeholder="YYYY-MM-DD" />
+        <Field label="To" value={to} onChangeText={setTo} placeholder="YYYY-MM-DD" />
+        <Field label="Reason" value={reason} onChangeText={setReason} placeholder="Family / travel / sick" />
+        {err ? <Text style={styles.err}>{err}</Text> : null}
+        <Button label="Submit to HR" onPress={submit} />
       </Card>
-      {state.leaves.map((l) => (
-        <Card key={l.id}>
-          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-            <Text style={{ fontWeight: "700", textTransform: "capitalize" }}>{l.type}</Text>
-            <Badge
-              label={l.status}
-              tone={l.status === "approved" ? "green" : l.status === "rejected" ? "default" : "peach"}
-            />
-            <Muted>{l.days}d</Muted>
-          </View>
-          <Muted>
-            {l.from}
-            {l.to !== l.from ? ` → ${l.to}` : ""} · {l.reason}
-          </Muted>
-        </Card>
-      ))}
+      {state.leaves.length === 0 ? (
+        <Muted>No leave filed this year.</Muted>
+      ) : (
+        state.leaves.map((l) => (
+          <Card key={l.id}>
+            <Text style={styles.body}>
+              {l.type} · {l.days}d · {l.status}
+            </Text>
+            <Muted>
+              {formatDay(l.from)} → {formatDay(l.to)}
+            </Muted>
+            <Muted>{l.reason}</Muted>
+          </Card>
+        ))
+      )}
     </ScrollView>
   );
 }
 
+function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <View style={styles.stat}>
+      <Muted>{label}</Muted>
+      <Text style={styles.body}>{value}</Text>
+      <Muted>{hint}</Muted>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 10, backgroundColor: colors.bg, paddingBottom: 40 },
-  h: { fontSize: 16, fontWeight: "700", color: colors.text },
-  input: {
+  wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 48 },
+  h: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  body: { fontSize: 15, fontWeight: "700", color: colors.ink, textTransform: "capitalize" },
+  stats: { flexDirection: "row", gap: 8 },
+  stat: {
+    flex: 1,
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 12,
     borderWidth: 1,
     borderColor: colors.peachBorder,
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: "#fff",
   },
+  chips: { flexDirection: "row", gap: 8 },
   chip: {
-    borderWidth: 1,
-    borderColor: colors.peachBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#fff",
+    backgroundColor: colors.peach,
   },
+  chipOn: { backgroundColor: colors.primary },
+  chipTxt: { fontWeight: "700", color: colors.ink, textTransform: "capitalize" },
+  chipTxtOn: { color: "#fff" },
+  err: { color: colors.danger, fontWeight: "600" },
 });

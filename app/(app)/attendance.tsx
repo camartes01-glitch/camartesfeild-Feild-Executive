@@ -1,58 +1,129 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
-import { format, parseISO } from "date-fns";
-import { Button, Card, Muted, Title } from "@/components/ui";
+import { useState } from "react";
+import { Alert, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { Button, Card, Field, Muted, Title } from "@/components/ui";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
-import { formatDuration, monthStats, shiftMinutes } from "@/lib/hours";
-
-const TARGET_DAYS = 22;
-const TARGET_MINUTES = 22 * 8 * 60;
+import { BANJARA, HITEC, LOCATION_PRESETS, ROSTER } from "@/lib/seed";
+import { formatDuration, formatWhen, monthStats, shiftMinutes } from "@/lib/hours";
+import { formatKm, GEOFENCE_KM, haversineKm, nearestHubKm } from "@/lib/geo";
+import { t } from "@/lib/i18n";
 
 export default function AttendanceScreen() {
-  const { state, openShift, clockIn, clockOut, live } = useApp();
+  const { state, live, clockIn, clockOut, requestOt, openShift, locationMode, setLocationMode } = useApp();
+  const lang = state.language;
+  const [reason, setReason] = useState("");
   const stats = monthStats(state.shifts);
-  const sorted = [...state.shifts].sort((a, b) => b.clockIn.localeCompare(a.clockIn));
+  const otMinutes = state.shifts.reduce((acc, s) => {
+    const extra = Math.max(0, shiftMinutes(s) - 8 * 60);
+    return acc + extra;
+  }, 0);
+  const hubKm = live ? nearestHubKm(live, [BANJARA.geo, HITEC.geo]) : null;
+  const nearer = live
+    ? haversineKm(live, BANJARA.geo) <= haversineKm(live, HITEC.geo)
+      ? BANJARA.name
+      : HITEC.name
+    : null;
+
+  async function selfieThenClock() {
+    let selfieUri: string | undefined;
+    if (Platform.OS !== "web") {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Camera", t(lang, "selfieNeeded"));
+        return;
+      }
+      const shot = await ImagePicker.launchCameraAsync({
+        quality: 0.4,
+        cameraType: ImagePicker.CameraType.front,
+      });
+      if (shot.canceled || !shot.assets[0]) return;
+      selfieUri = shot.assets[0].uri;
+    } else {
+      selfieUri = "web-selfie";
+    }
+    const err = clockIn({ selfieUri, overrideReason: reason.trim() || undefined });
+    if (err === "geofence") {
+      Alert.alert(
+        "Outside hub geofence",
+        `You are ${hubKm != null ? formatKm(hubKm) : "—"} from ${nearer ?? "a hub"} (limit ${GEOFENCE_KM * 1000} m). Switch to a hub pin, or enter an override reason.`,
+      );
+      return;
+    }
+    if (err) Alert.alert("Cannot clock in", err);
+    else setReason("");
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Title>Attendance & hours</Title>
-      <Muted>Clock in/out with GPS. Totals are for this month so far.</Muted>
+      <Title>{t(lang, "hours")}</Title>
+      <Muted>Selfie punch · 250 m hub geofence · GPS only while on shift</Muted>
+      <View style={styles.stats}>
+        <Stat label="Hours" value={formatDuration(stats.minutes)} />
+        <Stat label="OT" value={formatDuration(otMinutes)} />
+        <Stat label="Days" value={String(stats.days)} />
+      </View>
+      {live && nearer ? (
+        <Card>
+          <Text style={styles.h}>Nearest hub</Text>
+          <Muted>
+            {nearer} · {hubKm != null ? formatKm(hubKm) : "—"}
+          </Muted>
+        </Card>
+      ) : null}
       <Card>
-        <Text style={styles.body}>
-          {openShift ? `On shift · ${formatDuration(shiftMinutes(openShift))}` : "You are off shift"}
-        </Text>
-        <Muted>
-          {live
-            ? `Fix ${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} will be stored on clock ${openShift ? "out" : "in"}.`
-            : "Turn on location to geotag attendance."}
-        </Muted>
+        <Text style={styles.h}>{openShift ? t(lang, "onShift") : t(lang, "clockIn")}</Text>
         {openShift ? (
-          <Button label="Clock out" variant="outline" onPress={clockOut} />
+          <>
+            <Muted>Started {formatWhen(openShift.clockIn)}</Muted>
+            {openShift.otRequested ? <Muted>Overtime requested for this shift.</Muted> : null}
+            <Button label={t(lang, "otRequest")} variant="ghost" onPress={requestOt} />
+            <Button label={t(lang, "clockOut")} variant="outline" onPress={clockOut} />
+          </>
         ) : (
-          <Button label="Clock in" onPress={clockIn} />
+          <>
+            <Muted>Stand at Banjara Hills or HITEC City hub, or pick that pin. Off-site needs a reason.</Muted>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {LOCATION_PRESETS.filter((p) => p.id === "live" || p.id === "banjara" || p.id === "hitec").map((p) => {
+                const id = p.id === "live" ? "gps" : p.id;
+                return (
+                  <Button
+                    key={p.id}
+                    label={p.label}
+                    variant={locationMode === id ? "primary" : "outline"}
+                    onPress={() => setLocationMode(id)}
+                  />
+                );
+              })}
+            </ScrollView>
+            <Field
+              label="Override reason"
+              value={reason}
+              onChangeText={setReason}
+              placeholder="Traffic / GPS error / customer site start"
+            />
+            <Button label="Selfie punch-in" onPress={() => void selfieThenClock()} />
+          </>
         )}
       </Card>
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <Card>
-          <Muted>Working days</Muted>
-          <Text style={styles.big}>{stats.days}</Text>
-          <Muted>of {TARGET_DAYS} expected</Muted>
-        </Card>
-        <Card>
-          <Muted>Hours</Muted>
-          <Text style={styles.big}>{formatDuration(stats.minutes)}</Text>
-          <Muted>of {formatDuration(TARGET_MINUTES)} target</Muted>
-        </Card>
-      </View>
-      {sorted.map((s) => (
-        <Card key={s.id}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-            <Text style={styles.body}>{format(parseISO(s.clockIn), "EEE, d MMM")}</Text>
-            <Text>{formatDuration(shiftMinutes(s))}</Text>
-          </View>
+      <Text style={styles.h}>Roster</Text>
+      {ROSTER.map((r) => (
+        <Card key={r.date}>
+          <Text style={styles.body}>{r.date}</Text>
           <Muted>
-            In {format(parseISO(s.clockIn), "h:mm a")}
-            {s.clockOut ? ` · Out ${format(parseISO(s.clockOut), "h:mm a")}` : " · still open"}
+            {r.window} · {r.hub}
+          </Muted>
+        </Card>
+      ))}
+      <Text style={styles.h}>This month</Text>
+      {[...state.shifts].reverse().map((s) => (
+        <Card key={s.id}>
+          <Text style={styles.body}>{s.date}</Text>
+          <Muted>
+            {new Date(s.clockIn).toLocaleTimeString()} →{" "}
+            {s.clockOut ? new Date(s.clockOut).toLocaleTimeString() : "open"}
+            {s.geofenceOverride ? " · override" : ""}
+            {s.otRequested ? " · OT" : ""}
           </Muted>
         </Card>
       ))}
@@ -60,8 +131,26 @@ export default function AttendanceScreen() {
   );
 }
 
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.stat}>
+      <Muted>{label}</Muted>
+      <Text style={styles.body}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 10, backgroundColor: colors.bg, paddingBottom: 40 },
-  body: { fontSize: 16, fontWeight: "700", color: colors.text },
-  big: { fontSize: 28, fontWeight: "800", color: colors.text },
+  wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 48 },
+  h: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  body: { fontSize: 15, fontWeight: "700", color: colors.ink },
+  stats: { flexDirection: "row", gap: 8 },
+  stat: {
+    flex: 1,
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+  },
 });

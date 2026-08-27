@@ -1,8 +1,18 @@
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
 import { colors, radius } from "@/constants/theme";
 
-export function Card({ children }: { children: React.ReactNode }) {
-  return <View style={styles.card}>{children}</View>;
+export function Card({
+  children,
+  accent = true,
+}: {
+  children: React.ReactNode;
+  accent?: boolean;
+}) {
+  return (
+    <View style={[styles.card, accent && styles.cardAccent]}>
+      {children}
+    </View>
+  );
 }
 
 export function Title({ children }: { children: React.ReactNode }) {
@@ -18,11 +28,13 @@ export function Button({
   onPress,
   variant = "primary",
   disabled,
+  flex,
 }: {
   label: string;
   onPress: () => void;
   variant?: "primary" | "outline" | "ghost" | "danger";
   disabled?: boolean;
+  flex?: number;
 }) {
   return (
     <Pressable
@@ -30,6 +42,7 @@ export function Button({
       disabled={disabled}
       style={[
         styles.btn,
+        flex != null ? { flex } : null,
         variant === "primary" && styles.btnPrimary,
         variant === "outline" && styles.btnOutline,
         variant === "ghost" && styles.btnGhost,
@@ -42,7 +55,7 @@ export function Button({
           styles.btnText,
           variant === "primary" && { color: colors.white },
           variant === "danger" && { color: colors.danger },
-          (variant === "outline" || variant === "ghost") && { color: colors.text },
+          (variant === "outline" || variant === "ghost") && { color: colors.primaryDark },
         ]}
       >
         {label}
@@ -51,18 +64,11 @@ export function Button({
   );
 }
 
-export function Field({
-  label,
-  ...props
-}: TextInputProps & { label: string }) {
+export function Field({ label, ...props }: TextInputProps & { label: string }) {
   return (
     <View style={{ gap: 6 }}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
-        placeholderTextColor={colors.muted}
-        style={styles.input}
-        {...props}
-      />
+      <TextInput placeholderTextColor={colors.muted} style={styles.input} {...props} />
     </View>
   );
 }
@@ -96,7 +102,15 @@ export function Badge({
             : colors.white;
   return (
     <View style={[styles.badge, { backgroundColor: bg }]}>
-      <Text style={{ color: fg, fontSize: 11, fontWeight: "600" }}>{label}</Text>
+      <Text style={{ color: fg, fontSize: 11, fontWeight: "700" }}>{label}</Text>
+    </View>
+  );
+}
+
+export function BrandMark() {
+  return (
+    <View style={styles.mark}>
+      <Text style={styles.markC}>C</Text>
     </View>
   );
 }
@@ -107,32 +121,50 @@ const styles = StyleSheet.create({
     borderColor: colors.peachBorder,
     borderWidth: 1,
     borderRadius: radius,
-    padding: 14,
+    padding: 16,
     gap: 8,
+    shadowColor: colors.primaryDark,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  title: { fontSize: 22, fontWeight: "700", color: colors.text },
-  muted: { fontSize: 13, color: colors.muted, lineHeight: 18 },
-  label: { fontSize: 13, fontWeight: "600", color: colors.text },
+  cardAccent: {
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary,
+  },
+  title: { fontSize: 24, fontWeight: "800", color: colors.ink, letterSpacing: -0.4 },
+  muted: { fontSize: 13, color: colors.muted, lineHeight: 19 },
+  label: { fontSize: 13, fontWeight: "700", color: colors.ink },
   input: {
     borderWidth: 1,
     borderColor: colors.peachBorder,
-    backgroundColor: colors.white,
-    borderRadius: 10,
+    backgroundColor: colors.cream,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     fontSize: 16,
     color: colors.text,
   },
   btn: {
-    borderRadius: 10,
-    paddingVertical: 12,
+    borderRadius: 12,
+    paddingVertical: 13,
     alignItems: "center",
     justifyContent: "center",
   },
   btnPrimary: { backgroundColor: colors.primary },
-  btnOutline: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.peachBorder },
-  btnGhost: { backgroundColor: "transparent" },
+  btnOutline: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.primary },
+  btnGhost: { backgroundColor: colors.peach },
   btnDanger: { backgroundColor: "#FEE2E2" },
-  btnText: { fontSize: 15, fontWeight: "600" },
-  badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 },
+  btnText: { fontSize: 15, fontWeight: "700" },
+  badge: { borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4 },
+  mark: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  markC: { color: "#fff", fontWeight: "800", fontSize: 24 },
 });

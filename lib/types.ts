@@ -56,6 +56,25 @@ export type TaskEvent = {
   label: string;
 };
 
+export type LeaveRequest = {
+  id: string;
+  type: LeaveType;
+  from: string;
+  to: string;
+  days: number;
+  reason: string;
+  status: LeaveStatus;
+  submittedAt: string;
+};
+
+export type LocationPing = {
+  at: string;
+  lat: number;
+  lng: number;
+  accuracyM: number;
+  source: "gps" | "simulated";
+};
+
 export type FieldTask = {
   id: string;
   kind: TaskKind;
@@ -76,6 +95,66 @@ export type FieldTask = {
   customerConfirmed?: boolean;
   addressMatch?: "match" | "mismatch" | "unverified";
   inventoryCounted?: Record<string, number>;
+  otpCode?: string;
+  otpVerified?: boolean;
+  scannedSerials?: string[];
+  whatsappSent?: boolean;
+  customerRating?: number;
+  slaMinutes?: number;
+};
+
+export type DamageReport = {
+  id: string;
+  taskId: string;
+  serial: string;
+  note: string;
+  at: string;
+};
+
+export type ExpenseClaim = {
+  id: string;
+  date: string;
+  km: number;
+  amountInr: number;
+  note: string;
+  status: "draft" | "submitted" | "approved";
+};
+
+export type AuditEvent = {
+  id: string;
+  at: string;
+  label: string;
+};
+
+export type OfflineItem = {
+  id: string;
+  at: string;
+  label: string;
+  synced: boolean;
+};
+
+export type AppNotice = {
+  id: string;
+  title: string;
+  body: string;
+  at: string;
+  read: boolean;
+};
+
+export type TrainingItem = {
+  id: string;
+  title: string;
+  body: string;
+  done: boolean;
+};
+
+export type TeamMate = {
+  id: string;
+  name: string;
+  employeeId: string;
+  status: "on_shift" | "off_shift" | "on_task";
+  area: string;
+  geo: GeoPoint;
 };
 
 export type Shift = {
@@ -85,25 +164,16 @@ export type Shift = {
   clockOut?: string;
   clockInGeo?: GeoPoint;
   clockOutGeo?: GeoPoint;
+  selfieUri?: string;
+  geofenceOk?: boolean;
+  geofenceOverride?: string;
+  otRequested?: boolean;
 };
 
-export type LeaveRequest = {
-  id: string;
-  type: LeaveType;
-  from: string;
-  to: string;
-  days: number;
-  reason: string;
-  status: LeaveStatus;
-  submittedAt: string;
-};
-
-export type LocationPing = {
-  at: string;
-  lat: number;
-  lng: number;
-  accuracyM: number;
-  source: "gps" | "simulated";
+export type LeavePolicy = {
+  casual: number;
+  sick: number;
+  earned: number;
 };
 
 export type FieldUser = {
@@ -116,12 +186,24 @@ export type FieldUser = {
   role: "Field Executive";
   hub: string;
   avatarInitials: string;
+  employment: "Camartes employee";
 };
+
+export type Lang = "en" | "hi" | "te";
 
 export type AppState = {
   userId: string | null;
+  language: Lang;
+  deviceBoundId: string | null;
   tasks: FieldTask[];
   shifts: Shift[];
   leaves: LeaveRequest[];
   pings: LocationPing[];
+  damages: DamageReport[];
+  expenses: ExpenseClaim[];
+  audit: AuditEvent[];
+  offlineQueue: OfflineItem[];
+  notices: AppNotice[];
+  training: TrainingItem[];
+  leavePolicy: LeavePolicy;
 };

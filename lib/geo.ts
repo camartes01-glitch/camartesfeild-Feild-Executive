@@ -43,6 +43,8 @@ export function pathKm(pings: GeoPoint[]) {
   return total;
 }
 
-export function etaMinutes(km: number, kmh = 22) {
-  return Math.max(1, Math.round((km / kmh) * 60));
+export function nearestHubKm(point: GeoPoint, hubs: GeoPoint[]) {
+  return Math.min(...hubs.map((h) => haversineKm(point, h)));
 }
+
+export const GEOFENCE_KM = 0.25;

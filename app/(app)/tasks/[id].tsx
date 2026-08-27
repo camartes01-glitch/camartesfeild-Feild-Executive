@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Button, Card, Muted } from "@/components/ui";
@@ -8,6 +9,7 @@ import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { formatCoord, formatKm, haversineKm, mapsDirUrl } from "@/lib/geo";
 import { formatWhen } from "@/lib/hours";
+import { t } from "@/lib/i18n";
 import type { TaskKind } from "@/lib/types";
 
 function checkpoints(kind: TaskKind) {
@@ -19,7 +21,11 @@ function checkpoints(kind: TaskKind) {
 
 export default function TaskDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { state, live, setTaskStatus, updateTask } = useApp();
+  const { state, live, setTaskStatus, updateTask, verifyOtp, matchSerial, sendWhatsApp, addDamage } = useApp();
+  const lang = state.language;
+  const [otp, setOtp] = useState("");
+  const [serial, setSerial] = useState("");
+  const [dmg, setDmg] = useState("");
   const task = state.tasks.find((t) => t.id === id);
 
   if (!task) {
@@ -53,7 +59,15 @@ export default function TaskDetailScreen() {
       return;
     }
     if (current.kind === "address_verification" && current.addressMatch === "unverified") {
-      Alert.alert("Address", "Mark whether the address matches the booking.");
+      Alert.alert("Address result", "Mark whether the site matches the booking.");
+      return;
+    }
+    if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
+      Alert.alert("OTP", "Customer OTP is required for handover.");
+      return;
+    }
+    if (current.items.length && (current.scannedSerials?.length ?? 0) < current.items.length) {
+      Alert.alert("Serials", "Match every kit serial before closing.");
       return;
     }
     setTaskStatus(current.id, "completed", "Task completed with geotagged proof");
@@ -158,6 +172,30 @@ export default function TaskDetailScreen() {
 
       {task.kind === "delivery" || task.kind === "return" ? (
         <Card>
+          <Text style={styles.h}>{t(lang, "proof")}</Text>
+          {task.otpVerified ? (
+            <Muted>OTP accepted. Customer handover PIN is on file.</Muted>
+          ) : (
+            <>
+              <Muted>
+                Ask the customer for the 4-digit SMS PIN. Demo code {task.otpCode ?? "—"}.
+              </Muted>
+              <TextInput
+                value={otp}
+                onChangeText={setOtp}
+                placeholder="4-digit OTP"
+                keyboardType="number-pad"
+                style={styles.qty}
+              />
+              <Button
+                label={t(lang, "verifyOtp")}
+                onPress={() => {
+                  if (!verifyOtp(task.id, otp)) Alert.alert("Wrong OTP", "Ask the customer to resend.");
+                  else setOtp("");
+                }}
+              />
+            </>
+          )}
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <Text style={{ flex: 1, marginRight: 8 }}>Customer confirmed kit handover</Text>
             <Switch
@@ -166,6 +204,62 @@ export default function TaskDetailScreen() {
               trackColor={{ true: colors.primary }}
             />
           </View>
+          <Button label="WhatsApp ETA" variant="outline" onPress={() => sendWhatsApp(task.id, "eta")} />
+          <Button
+            label={task.kind === "return" ? "WhatsApp collected" : "WhatsApp delivered"}
+            variant="ghost"
+            onPress={() => sendWhatsApp(task.id, task.kind === "return" ? "collected" : "delivered")}
+          />
+        </Card>
+      ) : null}
+
+      {task.items.length > 0 && task.kind !== "inventory" ? (
+        <Card>
+          <Text style={styles.h}>{t(lang, "serials")}</Text>
+          <Muted>
+            {(task.scannedSerials?.length ?? 0)}/{task.items.length} kits confirmed
+          </Muted>
+          {task.items.map((item) => (
+            <Text key={item.serial} style={{ fontWeight: "600" }}>
+              {(task.scannedSerials ?? []).includes(item.serial) ? "✓" : "○"} {item.name} · {item.serial}
+            </Text>
+          ))}
+          <TextInput value={serial} onChangeText={setSerial} placeholder="Type serial" style={styles.qty} />
+          <Button
+            label={t(lang, "scanSerial")}
+            variant="outline"
+            onPress={() => {
+              if (!matchSerial(task.id, serial)) Alert.alert("No match", "Serial is not on this job sheet.");
+              setSerial("");
+            }}
+          />
+        </Card>
+      ) : null}
+
+      {task.status !== "completed" ? (
+        <Card>
+          <Text style={styles.h}>{t(lang, "damage")}</Text>
+          <TextInput value={dmg} onChangeText={setDmg} placeholder="What happened?" style={styles.qty} />
+          <Button
+            label="Log exception"
+            variant="ghost"
+            onPress={() => {
+              addDamage({
+                taskId: task.id,
+                serial: serial || task.items[0]?.serial || "kit",
+                note: dmg.trim() || "Kit flagged on site",
+              });
+              setDmg("");
+              Alert.alert("Logged", "Hub will review the exception.");
+            }}
+          />
+          {state.damages
+            .filter((d) => d.taskId === task.id)
+            .map((d) => (
+              <Muted key={d.id}>
+                {d.serial} · {d.note}
+              </Muted>
+            ))}
         </Card>
       ) : null}
 
