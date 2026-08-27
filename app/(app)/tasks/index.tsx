@@ -15,6 +15,7 @@ const FILTERS: { id: "all" | TaskKind; label: string }[] = [
   { id: "delivery", label: "Deliver" },
   { id: "return", label: "Return" },
   { id: "inventory", label: "Stock" },
+  { id: "vendor_visit", label: "Vendor" },
 ];
 
 export default function TasksScreen() {

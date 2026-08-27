@@ -1,3 +1,4 @@
+import { VENDORS } from "@/lib/vendors-seed";
 import type {
   AppState,
   FieldTask,
@@ -316,6 +317,55 @@ const TASKS: FieldTask[] = [
     completedAt: "2026-08-25T15:28:00+05:30",
     addressMatch: "match",
   },
+  {
+    id: "TSK-4820",
+    kind: "vendor_visit",
+    title: "Onboard Filmfare Studio to Camartes",
+    bookingRef: "MKT-104",
+    customerName: "Ramesh Iyer",
+    customerPhone: "+91 98480 22110",
+    status: "assigned",
+    scheduledFor: "2026-08-27T11:00:00+05:30",
+    store: BANJARA,
+    customerPlace: {
+      id: "vn-studio-filmfare",
+      name: "Filmfare Studio",
+      address: "Road No. 10, Banjara Hills, Hyderabad",
+      area: "Banjara Hills",
+      phone: "+91 98480 22110",
+      geo: { lat: 17.4152, lng: 78.4411 },
+    },
+    items: [],
+    notes:
+      "Marketing visit: pitch rental marketplace + vendor listing. Photograph storefront. Capture visiting card.",
+    photos: [],
+    timeline: [event("e1", "2026-08-27T07:20:00+05:30", "Assigned by Hyderabad city manager")],
+    vendorId: "vn-studio-filmfare",
+  },
+  {
+    id: "TSK-4821",
+    kind: "vendor_visit",
+    title: "Pitch Pixel LED Walls — WebLive + events",
+    bookingRef: "MKT-105",
+    customerName: "Arun Babu",
+    customerPhone: "+91 98660 33421",
+    status: "assigned",
+    scheduledFor: "2026-08-27T15:30:00+05:30",
+    store: HITEC,
+    customerPlace: {
+      id: "vn-led-pixel",
+      name: "Pixel LED Walls",
+      address: "Cyber Towers lane, HITEC City, Hyderabad",
+      area: "HITEC City",
+      phone: "+91 98660 33421",
+      geo: { lat: 17.4501, lng: 78.3802 },
+    },
+    items: [],
+    notes: "Onboard LED wall and event-stage inventory onto the Camartes vendor platform.",
+    photos: [],
+    timeline: [event("e1", "2026-08-27T07:22:00+05:30", "Assigned by Hyderabad city manager")],
+    vendorId: "vn-led-pixel",
+  },
 ];
 
 export const TASK_IDS = TASKS.map((t) => t.id);
@@ -421,11 +471,11 @@ export function createInitialState(): AppState {
         read: false,
       },
       {
-        id: "n2",
-        title: "Leave",
-        body: "Your Onam leave (10–11 Sep) is approved.",
-        at: "2026-08-08T10:00:00+05:30",
-        read: true,
+        id: "n3",
+        title: "Vendor market",
+        body: "Visit Filmfare Studio and Pixel LED today. Onboard new partners onto Camartes.",
+        at: "2026-08-27T07:30:00+05:30",
+        read: false,
       },
     ],
     training: [
@@ -443,6 +493,8 @@ export function createInitialState(): AppState {
       },
     ],
     leavePolicy: { casual: 6, sick: 6, earned: 12 },
+    vendors: structuredClone(VENDORS),
+    vendorVisits: [],
   };
 }
 

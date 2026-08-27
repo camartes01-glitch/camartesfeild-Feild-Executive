@@ -13,7 +13,7 @@ const LANGS: { id: Lang; label: string }[] = [
 ];
 
 export default function MoreScreen() {
-  const { user, state, logout, resetDemo, setLanguage, triggerSos } = useApp();
+  const { user, state, logout, resetDemo, setLanguage, triggerSos, cityManager } = useApp();
   const lang = state.language;
 
   return (
@@ -51,10 +51,11 @@ export default function MoreScreen() {
           ))}
         </View>
       </Card>
+      <Button label={t(lang, "vendors")} variant="outline" onPress={() => router.push("/(app)/vendors")} />
       <Button label={t(lang, "hubTeam")} variant="outline" onPress={() => router.push("/hub" as Href)} />
       <Button label={t(lang, "expenses")} variant="outline" onPress={() => router.push("/expenses" as Href)} />
       <Button label={t(lang, "training")} variant="outline" onPress={() => router.push("/training" as Href)} />
-      <Button label={t(lang, "sos")} variant="danger" onPress={triggerSos} />
+      <Button label={`SOS · ${cityManager.manager.city}`} variant="danger" onPress={triggerSos} />
       <Card>
         <Text style={styles.h}>{t(lang, "audit")}</Text>
         {state.audit.slice(0, 12).map((a) => (

@@ -6,11 +6,20 @@ export const KIND_LABEL: Record<TaskKind, string> = {
   delivery: "Store → customer",
   return: "Customer → store",
   inventory: "Store inventory",
+  vendor_visit: "Vendor onboard",
 };
 
 export function KindBadge({ kind }: { kind: TaskKind }) {
   const tone =
-    kind === "delivery" ? "peach" : kind === "return" ? "blue" : kind === "inventory" ? "violet" : "green";
+    kind === "delivery"
+      ? "peach"
+      : kind === "return"
+        ? "blue"
+        : kind === "inventory"
+          ? "violet"
+          : kind === "vendor_visit"
+            ? "peach"
+            : "green";
   return <Badge label={KIND_LABEL[kind]} tone={tone} />;
 }
 

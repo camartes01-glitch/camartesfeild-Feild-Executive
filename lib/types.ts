@@ -2,7 +2,8 @@ export type TaskKind =
   | "address_verification"
   | "delivery"
   | "return"
-  | "inventory";
+  | "inventory"
+  | "vendor_visit";
 
 export type TaskStatus =
   | "assigned"
@@ -101,6 +102,48 @@ export type FieldTask = {
   whatsappSent?: boolean;
   customerRating?: number;
   slaMinutes?: number;
+  vendorId?: string;
+  vendorOutcome?: VendorVisitOutcome;
+};
+
+export type VendorKind =
+  | "photography_studio"
+  | "freelance_photographer"
+  | "videographer"
+  | "album_designer"
+  | "video_editor"
+  | "led_wall"
+  | "weblive";
+
+export type VendorStatus = "prospect" | "visited" | "follow_up" | "onboarded" | "declined";
+
+export type VendorVisitOutcome = "interested" | "follow_up" | "onboarded" | "declined" | "courtesy";
+
+export type Vendor = {
+  id: string;
+  kind: VendorKind;
+  name: string;
+  contact: string;
+  phone: string;
+  address: string;
+  area: string;
+  city: string;
+  geo: GeoPoint;
+  status: VendorStatus;
+  partnerCode?: string;
+  notes: string;
+  photos?: GeoPhoto[];
+};
+
+export type VendorVisit = {
+  id: string;
+  vendorId: string;
+  at: string;
+  outcome: VendorVisitOutcome;
+  pitch: string;
+  note: string;
+  geo?: GeoPoint;
+  onSite: boolean;
 };
 
 export type DamageReport = {
@@ -206,4 +249,6 @@ export type AppState = {
   notices: AppNotice[];
   training: TrainingItem[];
   leavePolicy: LeavePolicy;
+  vendors: Vendor[];
+  vendorVisits: VendorVisit[];
 };

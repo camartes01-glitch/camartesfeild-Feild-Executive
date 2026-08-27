@@ -4,16 +4,19 @@ Employee app for [Camartes](https://camartes.com) field executives at the Hydera
 
 Brand: orange `#FF6B35` on cream `#FFF7ED`, matching camartes.com.
 
-## What it does
+Field executives also visit nearby photography studios, freelance photographers, videographers, album designers, video editors, LED-wall and WebLive partners to market Camartes and onboard them onto the platform.
+
+SOS calls the **city manager nearest to your live GPS**. Device GPS is requested as soon as you sign in (the shift trail still records only while you are clocked in).
 
 - Clock in with selfie and a 250 m hub geofence (override with a reason)
-- GPS trail only while you are on shift
+- Live device GPS; shift trail only while clocked in
 - Address verification, store pickup → customer delivery, customer return → store, hub inventory
+- Vendor market: studios, freelance photographers, videographers, album designers, editors, LED walls, WebLive
 - Customer OTP, serial match, WhatsApp updates, damage notes, geotagged photos
 - Hours, roster, overtime, HR leave balances (casual / sick / earned)
-- Hub team map, travel expenses, kit-care training, SOS to the hub, English / Hindi / Telugu
+- Hub team map, travel expenses, kit-care training, SOS to the nearest city manager, English / Hindi / Telugu
 
-## Run
+## What it does
 
 ```bash
 npm install

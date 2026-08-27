@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, router } from "expo-router";
 import { Button, Card, Muted } from "@/components/ui";
 import { GeoCamera } from "@/components/geo-camera";
 import { MiniMap } from "@/components/mini-map";
@@ -16,6 +16,7 @@ function checkpoints(kind: TaskKind) {
   if (kind === "address_verification") return ["Address / nameplate"];
   if (kind === "delivery") return ["Store pickup", "Customer delivery"];
   if (kind === "return") return ["Customer pickup", "Store drop"];
+  if (kind === "vendor_visit") return ["Storefront / visiting card"];
   return ["Shelf / bay"];
 }
 
@@ -63,7 +64,13 @@ export default function TaskDetailScreen() {
       Alert.alert("Address result", "Mark whether the site matches the booking.");
       return;
     }
-    if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
+    if (current.kind === "vendor_visit") {
+      const visited = state.vendorVisits.some((v) => v.vendorId === current.vendorId) || current.photos.length > 0;
+      if (!visited) {
+        Alert.alert("Visit proof", "Log the vendor visit (Vendors tab) or capture a storefront photo.");
+        return;
+      }
+    } else if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
       Alert.alert("OTP", "Customer OTP is required for handover.");
       return;
     }
@@ -176,6 +183,14 @@ export default function TaskDetailScreen() {
             variant={task.addressMatch === "mismatch" ? "danger" : "outline"}
             onPress={() => updateTask(task.id, { addressMatch: "mismatch" })}
           />
+        </Card>
+      ) : null}
+
+      {task.kind === "vendor_visit" && task.vendorId ? (
+        <Card>
+          <Text style={styles.h}>Vendor onboarding</Text>
+          <Muted>Market Camartes and onboard this partner onto the platform.</Muted>
+          <Button label="Open vendor card" onPress={() => router.push(`/(app)/vendors/${task.vendorId}`)} />
         </Card>
       ) : null}
 

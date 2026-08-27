@@ -12,7 +12,8 @@ import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { format } from "date-fns";
 import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, USERS } from "@/lib/seed";
-import { GEOFENCE_KM, nearestHubKm } from "@/lib/geo";
+import { nearestCityManager } from "@/lib/cities";
+import { GEOFENCE_KM, formatKm, haversineKm, nearestHubKm } from "@/lib/geo";
 import type {
   AppState,
   DamageReport,
@@ -26,9 +27,12 @@ import type {
   LocationPing,
   Shift,
   TaskStatus,
+  Vendor,
+  VendorVisit,
+  VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v3";
+const KEY = "camartes-field-v4";
 
 export type LocationMode = "gps" | string;
 
@@ -65,6 +69,16 @@ type AppContextValue = {
   addExpense: (claim: Omit<ExpenseClaim, "id" | "status">) => void;
   markTraining: (id: string) => void;
   markNoticesRead: () => void;
+  gpsMessage: string | null;
+  refreshGps: () => void;
+  cityManager: ReturnType<typeof nearestCityManager>;
+  logVendorVisit: (input: {
+    vendorId: string;
+    outcome: VendorVisitOutcome;
+    pitch: string;
+    note: string;
+  }) => string | null;
+  onboardVendor: (vendorId: string) => string;
   triggerSos: () => void;
   requestLeave: (input: {
     type: LeaveType;
@@ -98,7 +112,7 @@ function mergeState(parsed: Partial<AppState>): AppState {
   for (const saved of incoming) {
     if (!tasks.some((t) => t.id === saved.id)) tasks.push(saved);
   }
-  return { ...base, ...parsed, tasks };
+  return { ...base, ...parsed, tasks, vendors: parsed.vendors?.length ? parsed.vendors : base.vendors, vendorVisits: parsed.vendorVisits ?? base.vendorVisits };
 }
 
 function geoFromSelection(locationMode: LocationMode, live: LiveFix | null) {
@@ -123,10 +137,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(createInitialState);
   const [ready, setReady] = useState(false);
   const [online, setOnline] = useState(true);
-  const [locationMode, setLocationMode] = useState<LocationMode>(() =>
-    Platform.OS === "web" ? "banjara" : "gps",
-  );
+  const [locationMode, setLocationMode] = useState<LocationMode>("gps");
   const [live, setLive] = useState<LiveFix | null>(null);
+  const [gpsMessage, setGpsMessage] = useState<string | null>(null);
+  const [gpsTick, setGpsTick] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -209,6 +223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         at: new Date().toISOString(),
       };
       setLive(fix);
+      setGpsMessage(null);
       if (openShift) {
         persistPing({
           at: fix.at,
@@ -221,17 +236,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (!openShift) {
-      return;
-    }
-
     let cancelled = false;
     let sub: Location.LocationSubscription | undefined;
     (async () => {
+      setGpsMessage("Requesting device GPS…");
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted" || cancelled) return;
+      if (cancelled) return;
+      if (status !== "granted") {
+        setGpsMessage("GPS permission denied. Enable location for this site, or pick a hub pin.");
+        return;
+      }
+      try {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (cancelled) return;
+        const fix: LiveFix = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracyM: pos.coords.accuracy ?? 25,
+          source: "gps",
+          at: new Date().toISOString(),
+        };
+        setLive(fix);
+        setGpsMessage(null);
+        if (openShift) {
+          persistPing({
+            at: fix.at,
+            lat: fix.lat,
+            lng: fix.lng,
+            accuracyM: fix.accuracyM,
+            source: "gps",
+          });
+        }
+      } catch {
+        if (!cancelled) setGpsMessage("No GPS fix yet. Move outdoors, or pick a hub pin to simulate.");
+      }
       sub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, timeInterval: 8000, distanceInterval: 8 },
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 5 },
         (pos) => {
           if (cancelled) return;
           const fix: LiveFix = {
@@ -242,13 +282,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             at: new Date().toISOString(),
           };
           setLive(fix);
-          persistPing({
-            at: fix.at,
-            lat: fix.lat,
-            lng: fix.lng,
-            accuracyM: fix.accuracyM,
-            source: "gps",
-          });
+          setGpsMessage(null);
+          if (openShift) {
+            persistPing({
+              at: fix.at,
+              lat: fix.lat,
+              lng: fix.lng,
+              accuracyM: fix.accuracyM,
+              source: "gps",
+            });
+          }
         },
       );
       if (cancelled) sub?.remove();
@@ -257,7 +300,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       sub?.remove();
     };
-  }, [locationMode, ready, state.userId, openShift, persistPing]);
+  }, [locationMode, ready, state.userId, openShift, persistPing, gpsTick]);
+
+  const cityManager = useMemo(() => {
+    const point = live ?? { lat: BANJARA.geo.lat, lng: BANJARA.geo.lng };
+    return nearestCityManager(point);
+  }, [live]);
+
+  const refreshGps = useCallback(() => {
+    setLocationMode("gps");
+    setGpsTick((n) => n + 1);
+  }, []);
 
   const user = useMemo(() => USERS.find((u) => u.id === state.userId) ?? null, [state.userId]);
 
@@ -341,7 +394,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
     queueIfOffline("Clock out");
     audit("Clock out");
-    setLive(null);
   }, [live, locationMode, queueIfOffline, audit]);
 
   const requestOt = useCallback(() => {
@@ -360,21 +412,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addPhoto = useCallback((taskId: string, photo: GeoPhoto) => {
-    setState((s) => ({
-      ...s,
-      tasks: s.tasks.map((t) =>
-        t.id === taskId
-          ? {
-              ...t,
-              photos: [...t.photos, photo],
-              timeline: [
-                ...t.timeline,
-                { id: `p-${photo.id}`, at: photo.geo.capturedAt, label: `Geotagged photo · ${photo.checkpoint}` },
-              ],
-            }
-          : t,
-      ),
-    }));
+    setState((s) => {
+      if (s.vendors.some((v) => v.id === taskId)) {
+        return {
+          ...s,
+          vendors: s.vendors.map((v) =>
+            v.id === taskId ? { ...v, photos: [...(v.photos ?? []), photo] } : v,
+          ),
+        };
+      }
+      return {
+        ...s,
+        tasks: s.tasks.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                photos: [...t.photos, photo],
+                timeline: [
+                  ...t.timeline,
+                  { id: `p-${photo.id}`, at: photo.geo.capturedAt, label: `Geotagged photo · ${photo.checkpoint}` },
+                ],
+              }
+            : t,
+        ),
+      };
+    });
     queueIfOffline(`Photo ${photo.checkpoint}`);
     audit(`Photo ${photo.checkpoint} on ${taskId}`);
   }, [queueIfOffline, audit]);
@@ -467,10 +529,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const triggerSos = useCallback(() => {
-    audit("SOS raised — hub manager notified");
-    Alert.alert("SOS sent", "Hyderabad hub manager is being called.");
-    void Linking.openURL("tel:+914048552100");
-  }, [audit]);
+    const { manager, km } = cityManager;
+    audit(`SOS raised — ${manager.city} city manager ${manager.name} (${formatKm(km)})`);
+    Alert.alert(
+      "SOS sent",
+      `${manager.name}, ${manager.city} city manager, is being called.\n${manager.phone}`,
+    );
+    void Linking.openURL(`tel:${manager.phone.replace(/\s/g, "")}`);
+  }, [audit, cityManager]);
 
   const setLanguage = useCallback((language: Lang) => {
     setState((s) => ({ ...s, language }));
@@ -494,6 +560,79 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       audit(`Leave requested ${input.type} ${input.from}`);
     },
     [audit],
+  );
+
+  const logVendorVisit = useCallback(
+    (input: { vendorId: string; outcome: VendorVisitOutcome; pitch: string; note: string }) => {
+      const vendor = state.vendors.find((v) => v.id === input.vendorId);
+      if (!vendor) return "Vendor not found.";
+      const geo = live ? { lat: live.lat, lng: live.lng, accuracyM: live.accuracyM } : undefined;
+      const onSite = geo ? haversineKm(geo, vendor.geo) <= 0.4 : false;
+      const visit: VendorVisit = {
+        id: `VV-${Date.now()}`,
+        vendorId: input.vendorId,
+        at: new Date().toISOString(),
+        outcome: input.outcome,
+        pitch: input.pitch,
+        note: input.note,
+        geo,
+        onSite,
+      };
+      const nextStatus: Vendor["status"] =
+        input.outcome === "onboarded"
+          ? "onboarded"
+          : input.outcome === "declined"
+            ? "declined"
+            : input.outcome === "follow_up"
+              ? "follow_up"
+              : "visited";
+      setState((s) => ({
+        ...s,
+        vendorVisits: [visit, ...s.vendorVisits],
+        vendors: s.vendors.map((v) =>
+          v.id === input.vendorId
+            ? {
+                ...v,
+                status: v.status === "onboarded" ? v.status : nextStatus,
+                partnerCode:
+                  input.outcome === "onboarded" ? v.partnerCode ?? `CM-VN-${String(Date.now()).slice(-4)}` : v.partnerCode,
+              }
+            : v,
+        ),
+        tasks: s.tasks.map((t) =>
+          t.vendorId === input.vendorId && t.status !== "completed"
+            ? {
+                ...t,
+                vendorOutcome: input.outcome,
+                timeline: [
+                  ...t.timeline,
+                  { id: `ev-${Date.now()}`, at: visit.at, label: `Vendor visit · ${input.outcome}` },
+                ],
+              }
+            : t,
+        ),
+      }));
+      audit(`Vendor visit ${vendor.name} · ${input.outcome}${onSite ? " · on site" : " · off site"}`);
+      queueIfOffline(`Vendor visit ${vendor.name}`);
+      return null;
+    },
+    [state.vendors, live, audit, queueIfOffline],
+  );
+
+  const onboardVendor = useCallback(
+    (vendorId: string) => {
+      const code = `CM-VN-${String(Date.now()).slice(-4)}`;
+      setState((s) => ({
+        ...s,
+        vendors: s.vendors.map((v) =>
+          v.id === vendorId ? { ...v, status: "onboarded" as const, partnerCode: v.partnerCode ?? code } : v,
+        ),
+      }));
+      const vendor = state.vendors.find((v) => v.id === vendorId);
+      audit(`Onboarded ${vendor?.name ?? vendorId} as ${code}`);
+      return code;
+    },
+    [audit, state.vendors],
   );
 
   const resetDemo = useCallback(() => {
@@ -530,6 +669,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addExpense,
     markTraining,
     markNoticesRead,
+    gpsMessage,
+    refreshGps,
+    cityManager,
+    logVendorVisit,
+    onboardVendor,
     triggerSos,
     requestLeave,
     resetDemo,

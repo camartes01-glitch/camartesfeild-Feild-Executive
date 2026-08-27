@@ -26,6 +26,9 @@ export default function HomeScreen() {
     openShift,
     triggerSos,
     markNoticesRead,
+    gpsMessage,
+    refreshGps,
+    cityManager,
   } = useApp();
   const lang = state.language;
   const openTasks = state.tasks.filter((t) => t.status !== "completed");
@@ -71,7 +74,12 @@ export default function HomeScreen() {
       </Text>
 
       <View style={styles.row}>
-        <Button flex={1} label={t(lang, "sos")} variant="danger" onPress={triggerSos} />
+        <Button
+          flex={1}
+          label={`SOS · ${cityManager.manager.city}`}
+          variant="danger"
+          onPress={triggerSos}
+        />
         <Button
           flex={1}
           label={`${t(lang, "notifications")}${unread ? ` (${unread})` : ""}`}
@@ -90,6 +98,9 @@ export default function HomeScreen() {
       <Card>
         <Text style={styles.h}>{t(lang, "liveLocation")}</Text>
         <Muted>{t(lang, "trackingOnShift")}</Muted>
+        <Muted>
+          City manager: {cityManager.manager.name} · {cityManager.manager.city} · {cityManager.manager.phone}
+        </Muted>
         <MiniMap
           markers={[
             { id: "you", label: "You", color: colors.primary, point: you },
@@ -102,12 +113,12 @@ export default function HomeScreen() {
           ]}
         />
         <Muted>
-          {openShift
-            ? live
-              ? `${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} · ±${Math.round(live.accuracyM)} m`
-              : "Getting fix…"
-            : "Pick a hub pin (web defaults to Banjara Hills) or clock in for live GPS."}
+          {live
+            ? `${live.source === "gps" ? "Device GPS" : "Simulated"} · ${live.lat.toFixed(5)}, ${live.lng.toFixed(5)} · ±${Math.round(live.accuracyM)} m · ${new Date(live.at).toLocaleTimeString()}`
+            : gpsMessage ?? "Waiting for a location fix…"}
         </Muted>
+        {gpsMessage ? <Muted>{gpsMessage}</Muted> : null}
+        <Button label="Use device GPS" variant={locationMode === "gps" ? "primary" : "outline"} onPress={refreshGps} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {LOCATION_PRESETS.map((p) => {
             const id = p.id === "live" ? "gps" : p.id;
@@ -158,6 +169,7 @@ export default function HomeScreen() {
           </Muted>
         ))}
         <Button label={t(lang, "hubTeam")} variant="ghost" onPress={() => router.push("/hub" as Href)} />
+        <Button label={t(lang, "vendors")} variant="ghost" onPress={() => router.push("/(app)/vendors")} />
       </Card>
 
       {next ? (
