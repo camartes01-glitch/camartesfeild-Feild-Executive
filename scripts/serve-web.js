@@ -6,6 +6,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const ROOT = path.resolve(__dirname, "..", "dist");
 const PORT = Number(process.env.PORT || 43172);
@@ -62,6 +63,13 @@ const server = http.createServer((req, res) => {
       res.end("Not found");
       return;
     }
+    const wantsGzip = (req.headers["accept-encoding"] || "").includes("gzip");
+    if (wantsGzip && (ext === ".js" || ext === ".html" || ext === ".css" || ext === ".json")) {
+      data = zlib.gzipSync(data);
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Vary", "Accept-Encoding");
+    }
+    res.setHeader("Content-Length", data.length);
     res.statusCode = 200;
     res.end(data);
   });
