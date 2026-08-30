@@ -1,4 +1,4 @@
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useEffect, useState } from "react";
 import { router } from "expo-router";
 import { BrandMark, Button, Card, Field, Muted, Title } from "@/components/ui";
@@ -57,6 +57,13 @@ export default function LoginScreen() {
             <Chip label="Arjun · 112" selected={email.startsWith("arjun")} onPress={() => setEmail("arjun@camartes.com")} />
           </ChipWrap>
         </Card>
+        <Pressable onPress={() => router.push("/admin")} style={styles.adminLink}>
+          <View>
+            <Text style={styles.adminTitle}>Operations manager?</Text>
+            <Text style={styles.adminCopy}>Open the field operations console</Text>
+          </View>
+          <Text style={styles.adminArrow}>→</Text>
+        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -73,4 +80,18 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   err: { color: colors.danger, fontSize: 13, fontWeight: "600" },
+  adminLink: {
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.peachBorder,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  adminTitle: { color: colors.ink, fontSize: 13, fontWeight: "800" },
+  adminCopy: { color: colors.muted, fontSize: 11, marginTop: 3 },
+  adminArrow: { color: colors.primaryDark, fontSize: 20, fontWeight: "700" },
 });
