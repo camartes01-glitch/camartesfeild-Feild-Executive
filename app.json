@@ -56,7 +56,8 @@
         {
           "cameraPermission": "Camartes Field takes geotagged photos at pickup, delivery and address verification."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
