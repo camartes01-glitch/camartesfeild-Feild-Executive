@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Camartes Field",
+    "name": "Camartes Field Test",
     "slug": "camartes-field",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,7 +16,7 @@
       }
     },
     "android": {
-      "package": "com.camartes.field",
+      "package": "com.camartes.field.test",
       "adaptiveIcon": {
         "backgroundColor": "#FF6B35",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
