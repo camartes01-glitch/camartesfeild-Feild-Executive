@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 import {
+  Alert,
+  Linking,
+  Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,11 +13,11 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { router } from "expo-router";
+import { differenceInMinutes, format, parseISO } from "date-fns";
 import {
   Bell,
   CalendarDays,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   CircleAlert,
   ClipboardList,
@@ -27,6 +31,7 @@ import {
   Store,
   TrendingUp,
   Users,
+  UserRoundCheck,
   X,
 } from "lucide-react-native";
 import { colors } from "@/constants/theme";
@@ -34,16 +39,18 @@ import { MiniMap } from "@/components/mini-map";
 import { KIND_LABEL } from "@/components/task-badges";
 import { useApp } from "@/lib/app-context";
 import { TEAM } from "@/lib/seed";
-import type { FieldTask, TaskStatus, Vendor } from "@/lib/types";
+import { slaState } from "@/lib/field-ops";
+import type { AppState, FieldTask, TaskStatus, Vendor } from "@/lib/types";
 
-type Section = "overview" | "team" | "tasks" | "vendors";
-type TaskFilter = "all" | "assigned" | "in_progress" | "blocked" | "completed";
+type Section = "overview" | "team" | "tasks" | "vendors" | "approvals";
+type TaskFilter = "all" | "assigned" | "in_progress" | "awaiting_photo" | "blocked" | "completed";
 
 const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "team", label: "Field team" },
   { id: "tasks", label: "Task board" },
   { id: "vendors", label: "Partners" },
+  { id: "approvals", label: "Approvals" },
 ];
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
@@ -54,43 +61,155 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   blocked: "Blocked",
 };
 
+function escapeCsv(value: string | number | undefined) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function exportTasks(tasks: FieldTask[]) {
+  const header = [
+    "Task",
+    "Booking",
+    "Type",
+    "Customer",
+    "Area",
+    "Status",
+    "Assignee",
+    "Scheduled",
+    "SLA minutes",
+  ];
+  const rows = tasks.map((task) => [
+    task.id,
+    task.bookingRef,
+    KIND_LABEL[task.kind],
+    task.customerName,
+    task.customerPlace.area,
+    STATUS_LABEL[task.status],
+    TEAM.find((member) => member.id === task.assigneeId)?.name ?? "Unassigned",
+    task.scheduledFor,
+    task.slaMinutes,
+  ]);
+  const csv = [header, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
+  if (Platform.OS !== "web" || typeof document === "undefined") {
+    Alert.alert("Export ready", "CSV download is available from the web operations console.");
+    return;
+  }
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `camartes-field-operations-${format(new Date(), "yyyy-MM-dd")}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function operationalMetrics(tasks: FieldTask[]) {
+  const done = tasks.filter((task) => task.status === "completed");
+  const withTiming = done.filter((task) => task.completedAt);
+  const onTime = withTiming.filter(
+    (task) => parseISO(task.completedAt!).getTime() <= parseISO(task.scheduledFor).getTime(),
+  ).length;
+  const firstAttempt = done.filter((task) => !(task.attempts?.length)).length;
+  const proofComplete = done.filter(
+    (task) =>
+      task.photos.length > 0 ||
+      task.customerConfirmed ||
+      task.addressMatch === "match" ||
+      task.inventoryCounted != null,
+  ).length;
+  const durations = done
+    .filter((task) => task.startedAt && task.completedAt)
+    .map((task) => differenceInMinutes(parseISO(task.completedAt!), parseISO(task.startedAt!)))
+    .filter((minutes) => minutes >= 0);
+  const percent = (part: number, total: number) => (total ? Math.round((part / total) * 100) : 0);
+  return {
+    onTime: percent(onTime, withTiming.length),
+    firstAttempt: percent(firstAttempt, done.length),
+    proof: percent(proofComplete, done.length),
+    averageMinutes: durations.length
+      ? Math.round(durations.reduce((sum, minutes) => sum + minutes, 0) / durations.length)
+      : 0,
+  };
+}
+
+function percentWidth(value: number): `${number}%` {
+  return `${Math.max(0, Math.min(100, value))}%`;
+}
+
 export default function AdminScreen() {
   const { width } = useWindowDimensions();
   const compact = width < 920;
   const phone = width < 620;
-  const { state, online } = useApp();
+  const {
+    state,
+    online,
+    assignTask,
+    setTaskStatus,
+    reviewLeave,
+    reviewExpense,
+    cityManager,
+  } = useApp();
   const [section, setSection] = useState<Section>("overview");
   const [query, setQuery] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   const openTasks = state.tasks.filter((task) => task.status !== "completed");
   const completedTasks = state.tasks.filter((task) => task.status === "completed");
-  const urgentTasks = openTasks.filter((task) => task.status === "blocked" || task.slaMinutes);
+  const urgentTasks = openTasks.filter(
+    (task) => task.status === "blocked" || task.status === "awaiting_photo" || slaState(task).tone !== "ok",
+  );
   const onboarding = state.vendors.filter((vendor) => vendor.onboarding);
+  const pendingApprovals =
+    state.leaves.filter((leave) => leave.status === "pending").length +
+    state.expenses.filter((expense) => expense.status === "submitted").length;
+  const alertCount =
+    urgentTasks.length +
+    state.notices.filter((notice) => !notice.read).length +
+    state.offlineQueue.filter((item) => !item.synced).length +
+    state.damages.length;
+  const selectedTask = state.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const filteredTasks = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return state.tasks.filter((task) => {
-      const statusMatch = taskFilter === "all" || task.status === taskFilter;
-      const queryMatch =
-        !needle ||
-        [task.id, task.bookingRef, task.customerName, task.customerPlace.area, task.title]
-          .join(" ")
-          .toLowerCase()
-          .includes(needle);
-      return statusMatch && queryMatch;
-    });
+    return state.tasks
+      .filter((task) => {
+        const statusMatch = taskFilter === "all" || task.status === taskFilter;
+        const queryMatch =
+          !needle ||
+          [task.id, task.bookingRef, task.customerName, task.customerPlace.area, task.title]
+            .join(" ")
+            .toLowerCase()
+            .includes(needle);
+        return statusMatch && queryMatch;
+      })
+      .sort((a, b) => {
+        const priority = (task: FieldTask) =>
+          task.status === "blocked" ? 0 : slaState(task).tone === "late" ? 1 : task.status === "in_progress" ? 2 : 3;
+        return priority(a) - priority(b) || a.scheduledFor.localeCompare(b.scheduledFor);
+      });
   }, [query, state.tasks, taskFilter]);
 
   return (
     <View style={styles.app}>
-      {!compact ? <Sidebar active={section} onChange={setSection} /> : null}
+      {!compact ? (
+        <Sidebar
+          active={section}
+          openTaskCount={openTasks.length}
+          approvalCount={pendingApprovals}
+          supportPhone={cityManager.manager.phone}
+          onChange={setSection}
+        />
+      ) : null}
 
       <View style={styles.main}>
         <Topbar
           compact={compact}
           online={online}
           active={section}
+          alertCount={alertCount}
           onChange={setSection}
+          onOpenAlerts={() => setAlertsOpen(true)}
           onClose={() => router.replace("/")}
         />
 
@@ -107,8 +226,12 @@ export default function AdminScreen() {
               completedCount={completedTasks.length}
               urgentCount={urgentTasks.length}
               vendorCount={onboarding.length}
+              followUpCount={onboarding.filter((vendor) => vendor.status === "follow_up").length}
+              lastUpdatedAt={state.audit[0]?.at}
+              onExport={() => exportTasks(state.tasks)}
               onViewTasks={() => setSection("tasks")}
               onViewTeam={() => setSection("team")}
+              onTaskPress={setSelectedTaskId}
             />
           ) : section === "tasks" ? (
             <TasksPanel
@@ -118,19 +241,60 @@ export default function AdminScreen() {
               filter={taskFilter}
               onFilter={setTaskFilter}
               tasks={filteredTasks}
+              onTaskPress={setSelectedTaskId}
             />
           ) : section === "team" ? (
             <TeamPanel phone={phone} tasks={state.tasks} />
-          ) : (
+          ) : section === "vendors" ? (
             <VendorsPanel phone={phone} vendors={onboarding} />
+          ) : (
+            <ApprovalsPanel
+              phone={phone}
+              state={state}
+              onReviewLeave={reviewLeave}
+              onReviewExpense={reviewExpense}
+            />
           )}
         </ScrollView>
       </View>
+      <TaskActionModal
+        task={selectedTask}
+        phone={phone}
+        onClose={() => setSelectedTaskId(null)}
+        onAssign={(assigneeId) => {
+          if (selectedTask) assignTask(selectedTask.id, assigneeId);
+        }}
+        onStatus={(status) => {
+          if (selectedTask) setTaskStatus(selectedTask.id, status, `Dispatch changed status to ${STATUS_LABEL[status]}`);
+        }}
+      />
+      <AlertsModal
+        visible={alertsOpen}
+        state={state}
+        urgentTasks={urgentTasks}
+        onClose={() => setAlertsOpen(false)}
+        onTaskPress={(id) => {
+          setAlertsOpen(false);
+          setSelectedTaskId(id);
+        }}
+      />
     </View>
   );
 }
 
-function Sidebar({ active, onChange }: { active: Section; onChange: (id: Section) => void }) {
+function Sidebar({
+  active,
+  openTaskCount,
+  approvalCount,
+  supportPhone,
+  onChange,
+}: {
+  active: Section;
+  openTaskCount: number;
+  approvalCount: number;
+  supportPhone: string;
+  onChange: (id: Section) => void;
+}) {
   return (
     <View style={styles.sidebar}>
       <View style={styles.brand}>
@@ -151,6 +315,7 @@ function Sidebar({ active, onChange }: { active: Section; onChange: (id: Section
             id={item.id}
             label={item.label}
             active={active === item.id}
+            count={item.id === "tasks" ? openTaskCount : item.id === "approvals" ? approvalCount : undefined}
             onPress={() => onChange(item.id)}
           />
         ))}
@@ -163,11 +328,16 @@ function Sidebar({ active, onChange }: { active: Section; onChange: (id: Section
           </View>
           <Text style={styles.supportTitle}>Need help?</Text>
           <Text style={styles.supportCopy}>Operations support is online</Text>
-          <Pressable style={styles.supportButton}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Call operations support"
+            onPress={() => void Linking.openURL(`tel:${supportPhone.replace(/\s/g, "")}`)}
+            style={styles.supportButton}
+          >
             <Text style={styles.supportButtonText}>Contact support</Text>
           </Pressable>
         </View>
-        <Pressable style={styles.managerRow}>
+        <View style={styles.managerRow}>
           <View style={styles.managerAvatar}>
             <Text style={styles.managerInitials}>AK</Text>
           </View>
@@ -176,7 +346,7 @@ function Sidebar({ active, onChange }: { active: Section; onChange: (id: Section
             <Text style={styles.managerRole}>City manager</Text>
           </View>
           <Settings size={18} color="#94A3B8" />
-        </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -186,23 +356,38 @@ function NavItem({
   id,
   label,
   active,
+  count,
   onPress,
 }: {
   id: Section;
   label: string;
   active: boolean;
+  count?: number;
   onPress: () => void;
 }) {
   const iconColor = active ? colors.primaryDark : "#64748B";
   const Icon =
-    id === "overview" ? LayoutDashboard : id === "team" ? Users : id === "tasks" ? ClipboardList : Store;
+    id === "overview"
+      ? LayoutDashboard
+      : id === "team"
+        ? Users
+        : id === "tasks"
+          ? ClipboardList
+          : id === "approvals"
+            ? UserRoundCheck
+            : Store;
   return (
-    <Pressable onPress={onPress} style={[styles.navItem, active && styles.navItemActive]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={[styles.navItem, active && styles.navItemActive]}
+    >
       <Icon size={19} color={iconColor} strokeWidth={active ? 2.4 : 2} />
       <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
-      {id === "tasks" ? (
+      {count ? (
         <View style={styles.navCount}>
-          <Text style={styles.navCountText}>7</Text>
+          <Text style={styles.navCountText}>{count}</Text>
         </View>
       ) : null}
     </Pressable>
@@ -213,13 +398,17 @@ function Topbar({
   compact,
   online,
   active,
+  alertCount,
   onChange,
+  onOpenAlerts,
   onClose,
 }: {
   compact: boolean;
   online: boolean;
   active: Section;
+  alertCount: number;
   onChange: (id: Section) => void;
+  onOpenAlerts: () => void;
   onClose: () => void;
 }) {
   return (
@@ -235,8 +424,7 @@ function Topbar({
         ) : (
           <View style={styles.locationPill}>
             <MapPin size={15} color={colors.primaryDark} />
-            <Text style={styles.locationText}>Hyderabad operations</Text>
-            <ChevronDown size={14} color="#64748B" />
+            <Text style={styles.locationText}>Hyderabad · All hubs</Text>
           </View>
         )}
         <View style={styles.topActions}>
@@ -244,11 +432,20 @@ function Topbar({
             <View style={[styles.syncDot, !online && { backgroundColor: "#EF4444" }]} />
             <Text style={styles.syncText}>{online ? "Live" : "Offline"}</Text>
           </View>
-          <Pressable style={styles.iconButton}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open operations alerts, ${alertCount} items`}
+            onPress={onOpenAlerts}
+            style={styles.iconButton}
+          >
             <Bell size={19} color="#475569" />
-            <View style={styles.alertDot} />
+            {alertCount > 0 ? (
+              <View style={styles.alertCount}>
+                <Text style={styles.alertCountText}>{alertCount > 9 ? "9+" : alertCount}</Text>
+              </View>
+            ) : null}
           </Pressable>
-          <Pressable onPress={onClose} style={styles.iconButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close admin console" onPress={onClose} style={styles.iconButton}>
             <X size={19} color="#475569" />
           </Pressable>
         </View>
@@ -263,6 +460,8 @@ function Topbar({
             <Pressable
               key={item.id}
               onPress={() => onChange(item.id)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active === item.id }}
               style={[styles.mobileNavItem, active === item.id && styles.mobileNavItemActive]}
             >
               <Text style={[styles.mobileNavText, active === item.id && styles.mobileNavTextActive]}>
@@ -284,8 +483,12 @@ function Overview({
   completedCount,
   urgentCount,
   vendorCount,
+  followUpCount,
+  lastUpdatedAt,
+  onExport,
   onViewTasks,
   onViewTeam,
+  onTaskPress,
 }: {
   compact: boolean;
   phone: boolean;
@@ -294,24 +497,42 @@ function Overview({
   completedCount: number;
   urgentCount: number;
   vendorCount: number;
+  followUpCount: number;
+  lastUpdatedAt?: string;
+  onExport: () => void;
   onViewTasks: () => void;
   onViewTeam: () => void;
+  onTaskPress: (id: string) => void;
 }) {
+  const performance = operationalMetrics(tasks);
+  const priorityTasks = [...openTasks].sort((a, b) => {
+    const priority = (task: FieldTask) =>
+      task.status === "blocked" ? 0 : slaState(task).tone === "late" ? 1 : task.status === "in_progress" ? 2 : 3;
+    return priority(a) - priority(b) || a.scheduledFor.localeCompare(b.scheduledFor);
+  });
+  const lastUpdated = lastUpdatedAt ? format(parseISO(lastUpdatedAt), "d MMM · h:mm a") : "No activity yet";
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
   return (
     <>
       <View style={[styles.pageHeading, phone && { alignItems: "flex-start" }]}>
         <View>
           <Text style={styles.eyebrow}>FIELD OPERATIONS</Text>
-          <Text style={styles.pageTitle}>Good morning, Ananya</Text>
-          <Text style={styles.pageSubtitle}>Here’s what’s happening across Hyderabad today.</Text>
+          <Text style={styles.pageTitle}>{greeting}, Ananya</Text>
+          <Text style={styles.pageSubtitle}>Live dispatch, SLA, and workforce status across Hyderabad.</Text>
         </View>
         <View style={[styles.headingActions, phone && { width: "100%" }]}>
-          <Pressable style={[styles.dateButton, phone && { flex: 1 }]}>
+          <View style={[styles.dateButton, phone && { flex: 1 }]}>
             <CalendarDays size={16} color="#475569" />
-            <Text style={styles.dateButtonText}>27 Aug 2026</Text>
-            <ChevronDown size={14} color="#94A3B8" />
-          </Pressable>
-          <Pressable style={styles.exportButton}>
+            <Text style={styles.dateButtonText}>{format(new Date(), "d MMM yyyy")}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Export field operations tasks as CSV"
+            onPress={onExport}
+            style={styles.exportButton}
+          >
             <Download size={16} color="#FFFFFF" />
             <Text style={styles.exportButtonText}>Export</Text>
           </Pressable>
@@ -324,7 +545,7 @@ function Overview({
           iconBg="#EFF6FF"
           label="Team on field"
           value={`${TEAM.filter((member) => member.status !== "off_shift").length}/${TEAM.length}`}
-          detail="All checked in"
+          detail="Coverage across 2 hubs"
           tone="green"
         />
         <MetricCard
@@ -340,7 +561,7 @@ function Overview({
           iconBg="#ECFDF5"
           label="Completed"
           value={String(completedCount)}
-          detail="+12% vs. yesterday"
+          detail={`${performance.onTime}% completed on time`}
           tone="green"
         />
         <MetricCard
@@ -348,7 +569,7 @@ function Overview({
           iconBg="#FFF7ED"
           label="Partner pipeline"
           value={String(vendorCount)}
-          detail="3 follow-ups due"
+          detail={`${followUpCount} follow-ups active`}
           tone="neutral"
         />
       </View>
@@ -358,7 +579,7 @@ function Overview({
           <View style={styles.panelHeader}>
             <View>
               <Text style={styles.panelTitle}>Live field view</Text>
-              <Text style={styles.panelSubtitle}>Last updated a few seconds ago</Text>
+              <Text style={styles.panelSubtitle}>Last event {lastUpdated}</Text>
             </View>
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
@@ -368,12 +589,22 @@ function Overview({
           <View style={styles.mapFrame}>
             <MiniMap
               height={compact ? 250 : 315}
-              markers={TEAM.map((member) => ({
-                id: member.id,
-                label: member.name.split(" ")[0],
-                color: member.status === "on_task" ? colors.primary : "#2563EB",
-                point: member.geo,
-              }))}
+              markers={[
+                ...TEAM.map((member) => ({
+                  id: member.id,
+                  label: member.name.split(" ")[0],
+                  color: member.status === "on_task" ? colors.primary : "#2563EB",
+                  point: member.geo,
+                })),
+                ...openTasks
+                  .filter((task) => slaState(task).tone === "late" || task.status === "blocked")
+                  .map((task) => ({
+                    id: `alert-${task.id}`,
+                    label: task.id.replace("TSK-", ""),
+                    color: "#DC2626",
+                    point: task.customerPlace.geo,
+                  })),
+              ]}
             />
             <View style={styles.mapLegend}>
               <View style={styles.legendRow}>
@@ -384,6 +615,10 @@ function Overview({
                 <View style={[styles.legendDot, { backgroundColor: "#2563EB" }]} />
                 <Text style={styles.legendText}>Available</Text>
               </View>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: "#DC2626" }]} />
+                <Text style={styles.legendText}>SLA breach</Text>
+              </View>
             </View>
           </View>
         </Panel>
@@ -392,7 +627,7 @@ function Overview({
           <View style={styles.panelHeader}>
             <View>
               <Text style={styles.panelTitle}>Field team</Text>
-              <Text style={styles.panelSubtitle}>3 members active</Text>
+              <Text style={styles.panelSubtitle}>{TEAM.filter((member) => member.status !== "off_shift").length} members active</Text>
             </View>
             <Pressable onPress={onViewTeam}>
               <Text style={styles.linkText}>View all</Text>
@@ -441,26 +676,28 @@ function Overview({
               <Text style={styles.linkText}>View task board</Text>
             </Pressable>
           </View>
-          {openTasks.slice(0, 4).map((task, index) => (
-            <TaskRow key={task.id} task={task} bordered={index > 0} phone={phone} />
+          {priorityTasks.slice(0, 4).map((task, index) => (
+            <TaskRow key={task.id} task={task} bordered={index > 0} phone={phone} onPress={() => onTaskPress(task.id)} />
           ))}
         </Panel>
 
         <Panel style={{ flex: 1 }}>
           <View style={styles.panelHeader}>
             <View>
-              <Text style={styles.panelTitle}>Today’s performance</Text>
-              <Text style={styles.panelSubtitle}>Hyderabad city team</Text>
+              <Text style={styles.panelTitle}>Operational performance</Text>
+              <Text style={styles.panelSubtitle}>Derived from completed work</Text>
             </View>
             <TrendingUp size={20} color="#059669" />
           </View>
-          <Performance label="On-time arrival" value="92%" width="92%" color="#10B981" />
-          <Performance label="First-attempt success" value="84%" width="84%" color="#2563EB" />
-          <Performance label="Proof compliance" value="96%" width="96%" color={colors.primary} />
+          <Performance label="On-time completion" value={`${performance.onTime}%`} width={percentWidth(performance.onTime)} color="#10B981" />
+          <Performance label="First-attempt success" value={`${performance.firstAttempt}%`} width={percentWidth(performance.firstAttempt)} color="#2563EB" />
+          <Performance label="Proof compliance" value={`${performance.proof}%`} width={percentWidth(performance.proof)} color={colors.primary} />
           <View style={styles.performanceFoot}>
             <Clock3 size={16} color="#64748B" />
             <Text style={styles.performanceFootText}>Avg. task time</Text>
-            <Text style={styles.performanceFootValue}>48 min</Text>
+            <Text style={styles.performanceFootValue}>
+              {performance.averageMinutes ? `${performance.averageMinutes} min` : "—"}
+            </Text>
           </View>
         </Panel>
       </View>
@@ -475,6 +712,7 @@ function TasksPanel({
   filter,
   onFilter,
   tasks,
+  onTaskPress,
 }: {
   phone: boolean;
   query: string;
@@ -482,11 +720,13 @@ function TasksPanel({
   filter: TaskFilter;
   onFilter: (filter: TaskFilter) => void;
   tasks: FieldTask[];
+  onTaskPress: (id: string) => void;
 }) {
   const filters: { id: TaskFilter; label: string }[] = [
     { id: "all", label: "All tasks" },
     { id: "assigned", label: "Assigned" },
     { id: "in_progress", label: "In progress" },
+    { id: "awaiting_photo", label: "Needs proof" },
     { id: "blocked", label: "Blocked" },
     { id: "completed", label: "Completed" },
   ];
@@ -528,11 +768,17 @@ function TasksPanel({
         <View style={styles.tableHeader}>
           <Text style={[styles.tableHeading, { flex: 1.3 }]}>TASK</Text>
           {!phone ? <Text style={[styles.tableHeading, { flex: 1 }]}>CUSTOMER</Text> : null}
-          {!phone ? <Text style={[styles.tableHeading, { flex: 0.8 }]}>AREA</Text> : null}
+          {!phone ? <Text style={[styles.tableHeading, { flex: 0.8 }]}>ASSIGNEE</Text> : null}
           <Text style={[styles.tableHeading, { width: 104 }]}>STATUS</Text>
         </View>
         {tasks.map((task, index) => (
-          <TaskRow key={task.id} task={task} bordered={index > 0} phone={phone} />
+          <TaskRow
+            key={task.id}
+            task={task}
+            bordered={index > 0}
+            phone={phone}
+            onPress={() => onTaskPress(task.id)}
+          />
         ))}
         {tasks.length === 0 ? (
           <View style={styles.empty}>
@@ -556,7 +802,12 @@ function TeamPanel({ phone, tasks }: { phone: boolean; tasks: FieldTask[] }) {
       />
       <View style={[styles.directoryGrid, phone && styles.stack]}>
         {TEAM.map((member, index) => {
-          const assigned = Math.max(1, tasks.filter((task) => task.status !== "completed").length - index * 2);
+          const assigned = tasks.filter(
+            (task) => task.assigneeId === member.id && task.status !== "completed",
+          ).length;
+          const completed = tasks.filter(
+            (task) => task.assigneeId === member.id && task.status === "completed",
+          ).length;
           return (
             <Panel key={member.id} style={{ flex: 1 }}>
               <View style={styles.personHead}>
@@ -585,8 +836,8 @@ function TeamPanel({ phone, tasks }: { phone: boolean; tasks: FieldTask[] }) {
                   <Text style={styles.personStatLabel}>Open tasks</Text>
                 </View>
                 <View>
-                  <Text style={styles.personStatValue}>{index === 1 ? "7.8" : index === 2 ? "12.4" : "5.2"} km</Text>
-                  <Text style={styles.personStatLabel}>Distance</Text>
+                  <Text style={styles.personStatValue}>{completed}</Text>
+                  <Text style={styles.personStatLabel}>Completed</Text>
                 </View>
               </View>
             </Panel>
@@ -631,6 +882,301 @@ function VendorsPanel({ phone, vendors }: { phone: boolean; vendors: Vendor[] })
         ))}
       </Panel>
     </>
+  );
+}
+
+function ApprovalsPanel({
+  phone,
+  state,
+  onReviewLeave,
+  onReviewExpense,
+}: {
+  phone: boolean;
+  state: AppState;
+  onReviewLeave: (id: string, status: "approved" | "rejected") => void;
+  onReviewExpense: (id: string, status: "approved" | "rejected") => void;
+}) {
+  const leaves = state.leaves.filter((leave) => leave.status === "pending");
+  const expenses = state.expenses.filter((expense) => expense.status === "submitted");
+  return (
+    <>
+      <SectionHeading
+        eyebrow="REVIEWS"
+        title="Approval queue"
+        subtitle="Review leave and expense requests without leaving dispatch."
+      />
+      <View style={[styles.approvalGrid, phone && styles.stack]}>
+        <Panel style={{ flex: 1 }}>
+          <View style={styles.panelHeader}>
+            <View>
+              <Text style={styles.panelTitle}>Leave requests</Text>
+              <Text style={styles.panelSubtitle}>{leaves.length} awaiting review</Text>
+            </View>
+            <CalendarDays size={19} color="#7C3AED" />
+          </View>
+          {leaves.map((leave, index) => (
+            <View key={leave.id} style={[styles.approvalRow, index > 0 && styles.rowBorder]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>
+                  {leave.type[0].toUpperCase() + leave.type.slice(1)} leave · {leave.days} day
+                  {leave.days === 1 ? "" : "s"}
+                </Text>
+                <Text style={styles.rowMeta}>
+                  {format(parseISO(leave.from), "d MMM")} · {leave.reason}
+                </Text>
+              </View>
+              <View style={styles.approvalActions}>
+                <SmallAction label="Reject" tone="neutral" onPress={() => onReviewLeave(leave.id, "rejected")} />
+                <SmallAction label="Approve" tone="green" onPress={() => onReviewLeave(leave.id, "approved")} />
+              </View>
+            </View>
+          ))}
+          {leaves.length === 0 ? <EmptyApproval label="No pending leave requests" /> : null}
+        </Panel>
+        <Panel style={{ flex: 1 }}>
+          <View style={styles.panelHeader}>
+            <View>
+              <Text style={styles.panelTitle}>Expense claims</Text>
+              <Text style={styles.panelSubtitle}>{expenses.length} awaiting review</Text>
+            </View>
+            <ClipboardList size={19} color="#2563EB" />
+          </View>
+          {expenses.map((expense, index) => (
+            <View key={expense.id} style={[styles.approvalRow, index > 0 && styles.rowBorder]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>₹{expense.amountInr} · {expense.km} km</Text>
+                <Text style={styles.rowMeta}>
+                  {format(parseISO(expense.date), "d MMM")} · {expense.note}
+                </Text>
+              </View>
+              <View style={styles.approvalActions}>
+                <SmallAction label="Reject" tone="neutral" onPress={() => onReviewExpense(expense.id, "rejected")} />
+                <SmallAction label="Approve" tone="green" onPress={() => onReviewExpense(expense.id, "approved")} />
+              </View>
+            </View>
+          ))}
+          {expenses.length === 0 ? <EmptyApproval label="No pending expense claims" /> : null}
+        </Panel>
+      </View>
+    </>
+  );
+}
+
+function SmallAction({
+  label,
+  tone,
+  onPress,
+}: {
+  label: string;
+  tone: "green" | "neutral";
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[styles.smallAction, tone === "green" && styles.smallActionPrimary]}
+    >
+      <Text style={[styles.smallActionText, tone === "green" && styles.smallActionTextPrimary]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function EmptyApproval({ label }: { label: string }) {
+  return (
+    <View style={styles.emptyApproval}>
+      <CheckCircle2 size={20} color="#10B981" />
+      <Text style={styles.emptyApprovalText}>{label}</Text>
+    </View>
+  );
+}
+
+function TaskActionModal({
+  task,
+  phone,
+  onClose,
+  onAssign,
+  onStatus,
+}: {
+  task: FieldTask | null;
+  phone: boolean;
+  onClose: () => void;
+  onAssign: (assigneeId: string) => void;
+  onStatus: (status: TaskStatus) => void;
+}) {
+  if (!task) return null;
+  const sla = task.status === "completed" ? null : slaState(task);
+  const statuses: TaskStatus[] = ["assigned", "in_progress", "awaiting_photo", "blocked", "completed"];
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={[styles.modalCard, phone && styles.modalCardPhone]}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>DISPATCH CONTROL</Text>
+              <Text style={styles.modalTitle}>{task.id} · {task.customerName}</Text>
+              <Text style={styles.pageSubtitle}>{task.title}</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close task controls" onPress={onClose} style={styles.iconButton}>
+              <X size={18} color="#475569" />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <View style={styles.taskFacts}>
+              <View style={styles.taskFact}>
+                <Text style={styles.taskFactLabel}>LOCATION</Text>
+                <Text style={styles.taskFactValue}>{task.customerPlace.area}</Text>
+              </View>
+              <View style={styles.taskFact}>
+                <Text style={styles.taskFactLabel}>WINDOW</Text>
+                <Text style={styles.taskFactValue}>{task.beatWindow ?? format(parseISO(task.scheduledFor), "h:mm a")}</Text>
+              </View>
+              <View style={styles.taskFact}>
+                <Text style={styles.taskFactLabel}>SLA</Text>
+                <Text style={[styles.taskFactValue, sla?.tone === "late" && styles.slaLate]}>
+                  {sla?.label ?? "Closed"}
+                </Text>
+              </View>
+            </View>
+
+            <View>
+              <Text style={styles.modalSectionLabel}>ASSIGNEE</Text>
+              <View style={styles.choiceWrap}>
+                {TEAM.map((member) => (
+                  <Pressable
+                    key={member.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: task.assigneeId === member.id }}
+                    onPress={() => onAssign(member.id)}
+                    style={[styles.choice, task.assigneeId === member.id && styles.choiceActive]}
+                  >
+                    <View style={[styles.choiceAvatar, { backgroundColor: avatarColor(TEAM.indexOf(member)) }]}>
+                      <Text style={styles.choiceAvatarText}>
+                        {member.name.split(" ").map((part) => part[0]).join("")}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text style={[styles.choiceText, task.assigneeId === member.id && styles.choiceTextActive]}>
+                        {member.name}
+                      </Text>
+                      <Text style={styles.rowMeta}>{member.area}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View>
+              <Text style={styles.modalSectionLabel}>WORK STATUS</Text>
+              <View style={styles.statusChoices}>
+                {statuses.map((status) => (
+                  <Pressable
+                    key={status}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: task.status === status }}
+                    onPress={() => onStatus(status)}
+                    style={[styles.statusChoice, task.status === status && styles.statusChoiceActive]}
+                  >
+                    <Text style={[styles.statusChoiceText, task.status === status && styles.statusChoiceTextActive]}>
+                      {STATUS_LABEL[status]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View>
+              <Text style={styles.modalSectionLabel}>RECENT TIMELINE</Text>
+              {task.timeline.slice(-4).reverse().map((event) => (
+                <View key={event.id} style={styles.timelineRow}>
+                  <View style={styles.timelineDot} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.timelineText}>{event.label}</Text>
+                    <Text style={styles.rowMeta}>{format(parseISO(event.at), "d MMM · h:mm a")}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function AlertsModal({
+  visible,
+  state,
+  urgentTasks,
+  onClose,
+  onTaskPress,
+}: {
+  visible: boolean;
+  state: AppState;
+  urgentTasks: FieldTask[];
+  onClose: () => void;
+  onTaskPress: (id: string) => void;
+}) {
+  const notices = state.notices.filter((notice) => !notice.read);
+  const unsynced = state.offlineQueue.filter((item) => !item.synced);
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.alertPanel}>
+          <View style={styles.modalHeader}>
+            <View>
+              <Text style={styles.eyebrow}>EXCEPTION CENTRE</Text>
+              <Text style={styles.modalTitle}>Operations alerts</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close alerts" onPress={onClose} style={styles.iconButton}>
+              <X size={18} color="#475569" />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.alertBody}>
+            <Text style={styles.modalSectionLabel}>SLA & TASKS · {urgentTasks.length}</Text>
+            {urgentTasks.map((task) => (
+              <Pressable key={task.id} onPress={() => onTaskPress(task.id)} style={styles.alertRow}>
+                <View style={styles.alertIconDanger}>
+                  <Clock3 size={16} color="#B91C1C" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>{task.id} · {task.customerName}</Text>
+                  <Text style={styles.alertDangerText}>
+                    {task.status === "blocked" ? "Blocked · action required" : slaState(task).label}
+                  </Text>
+                </View>
+                <ChevronRight size={16} color="#94A3B8" />
+              </Pressable>
+            ))}
+            <Text style={styles.modalSectionLabel}>UNREAD NOTICES · {notices.length}</Text>
+            {notices.map((notice) => (
+              <View key={notice.id} style={styles.alertRow}>
+                <View style={styles.alertIconInfo}>
+                  <Bell size={16} color="#2563EB" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>{notice.title}</Text>
+                  <Text style={styles.rowMeta}>{notice.body}</Text>
+                </View>
+              </View>
+            ))}
+            {unsynced.length > 0 ? (
+              <>
+                <Text style={styles.modalSectionLabel}>SYNC FAILURES · {unsynced.length}</Text>
+                {unsynced.map((item) => (
+                  <View key={item.id} style={styles.alertRow}>
+                    <View style={styles.alertIconDanger}>
+                      <CircleAlert size={16} color="#B91C1C" />
+                    </View>
+                    <Text style={[styles.rowTitle, { flex: 1 }]}>{item.label}</Text>
+                  </View>
+                ))}
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -691,16 +1237,33 @@ function MetricCard({
   );
 }
 
-function TaskRow({ task, bordered, phone }: { task: FieldTask; bordered: boolean; phone: boolean }) {
+function TaskRow({
+  task,
+  bordered,
+  phone,
+  onPress,
+}: {
+  task: FieldTask;
+  bordered: boolean;
+  phone: boolean;
+  onPress: () => void;
+}) {
+  const assignee = TEAM.find((member) => member.id === task.assigneeId);
+  const sla = task.status === "completed" ? null : slaState(task);
   return (
-    <View style={[styles.taskRow, bordered && styles.rowBorder]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open dispatch controls for ${task.id}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.taskRow, bordered && styles.rowBorder, pressed && styles.taskRowPressed]}
+    >
       <View style={{ flex: 1.3 }}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {task.id} · {KIND_LABEL[task.kind]}
         </Text>
-        <Text style={styles.rowMeta} numberOfLines={1}>
-          {task.bookingRef} · {task.beatWindow ?? "Flexible"}
-          {phone ? ` · ${task.customerName}` : ""}
+        <Text style={[styles.rowMeta, sla?.tone === "late" && styles.slaLate]} numberOfLines={1}>
+          {sla ? sla.label : task.bookingRef}
+          {phone ? ` · ${task.customerName} · ${assignee?.name ?? "Unassigned"}` : ""}
         </Text>
       </View>
       {!phone ? (
@@ -715,12 +1278,12 @@ function TaskRow({ task, bordered, phone }: { task: FieldTask; bordered: boolean
       ) : null}
       {!phone ? (
         <View style={{ flex: 0.8 }}>
-          <View style={styles.inlineMeta}>
-            <MapPin size={12} color="#94A3B8" />
-            <Text style={styles.rowMeta} numberOfLines={1}>
-              {task.customerPlace.area}
-            </Text>
-          </View>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {assignee?.name ?? "Unassigned"}
+          </Text>
+          <Text style={styles.rowMeta} numberOfLines={1}>
+            {task.customerPlace.area}
+          </Text>
         </View>
       ) : null}
       <View style={{ width: 104, alignItems: "flex-end" }}>
@@ -729,7 +1292,7 @@ function TaskRow({ task, bordered, phone }: { task: FieldTask; bordered: boolean
           tone={task.status === "completed" ? "green" : task.status === "blocked" ? "red" : "orange"}
         />
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -930,6 +1493,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FFFFFF",
   },
+  alertCount: {
+    position: "absolute",
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    top: 3,
+    right: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+    backgroundColor: "#DC2626",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+  },
+  alertCountText: { color: "#FFFFFF", fontSize: 8, fontWeight: "800" },
   compactBrand: { flexDirection: "row", alignItems: "center", gap: 9 },
   compactBrandText: { fontSize: 16, fontWeight: "800", color: "#172033" },
   mobileNav: {
@@ -1067,7 +1645,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   statusDot: { width: 5, height: 5, borderRadius: 3 },
-  statusText: { fontSize: 9, fontWeight: "800", textTransform: "capitalize" },
+  statusText: { fontSize: 10, fontWeight: "800", textTransform: "capitalize" },
   fullButton: {
     minHeight: 38,
     borderRadius: 9,
@@ -1080,6 +1658,8 @@ const styles = StyleSheet.create({
   },
   fullButtonText: { color: colors.primaryDark, fontSize: 11, fontWeight: "800" },
   taskRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 10 },
+  taskRowPressed: { opacity: 0.7, backgroundColor: "#F8FAFC" },
+  slaLate: { color: "#B91C1C", fontWeight: "700" },
   tableHeader: {
     flexDirection: "row",
     gap: 14,
@@ -1172,4 +1752,130 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF7ED",
   },
   vendorType: { width: 150, color: "#64748B", fontSize: 10, textTransform: "capitalize" },
+  approvalGrid: { flexDirection: "row", gap: 16, alignItems: "flex-start" },
+  approvalRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 11 },
+  approvalActions: { flexDirection: "row", gap: 7 },
+  smallAction: {
+    minHeight: 32,
+    borderRadius: 8,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
+  },
+  smallActionPrimary: { borderColor: "#A7F3D0", backgroundColor: "#ECFDF5" },
+  smallActionText: { color: "#64748B", fontSize: 10, fontWeight: "700" },
+  smallActionTextPrimary: { color: "#047857" },
+  emptyApproval: { minHeight: 140, alignItems: "center", justifyContent: "center", gap: 8 },
+  emptyApprovalText: { color: "#64748B", fontSize: 11, fontWeight: "600" },
+  modalBackdrop: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    backgroundColor: "rgba(15, 23, 42, 0.42)",
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 680,
+    maxHeight: "88%",
+    borderRadius: 18,
+    overflow: "hidden",
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.2,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 12 },
+  },
+  modalCardPhone: { maxHeight: "94%", borderRadius: 14 },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EEF2F6",
+  },
+  modalTitle: { color: "#172033", fontSize: 19, fontWeight: "800", letterSpacing: -0.3 },
+  modalBody: { padding: 20, gap: 22 },
+  taskFacts: { flexDirection: "row", gap: 9 },
+  taskFact: { flex: 1, minWidth: 0, borderRadius: 10, padding: 11, backgroundColor: "#F8FAFC" },
+  taskFactLabel: { color: "#94A3B8", fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
+  taskFactValue: { color: "#334155", fontSize: 11, fontWeight: "700", marginTop: 4 },
+  modalSectionLabel: {
+    color: "#94A3B8",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginBottom: 9,
+  },
+  choiceWrap: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  choice: {
+    minWidth: 190,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    padding: 10,
+  },
+  choiceActive: { borderColor: "#FDBA74", backgroundColor: "#FFF7ED" },
+  choiceAvatar: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  choiceAvatarText: { color: "#475569", fontSize: 9, fontWeight: "800" },
+  choiceText: { color: "#475569", fontSize: 11, fontWeight: "700" },
+  choiceTextActive: { color: colors.primaryDark },
+  statusChoices: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  statusChoice: {
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: "#FFFFFF",
+  },
+  statusChoiceActive: { borderColor: "#FDBA74", backgroundColor: "#FFF7ED" },
+  statusChoiceText: { color: "#64748B", fontSize: 10, fontWeight: "700" },
+  statusChoiceTextActive: { color: colors.primaryDark },
+  timelineRow: { flexDirection: "row", gap: 10, paddingVertical: 7 },
+  timelineDot: { width: 7, height: 7, borderRadius: 4, marginTop: 5, backgroundColor: colors.primary },
+  timelineText: { color: "#475569", fontSize: 11, fontWeight: "600", lineHeight: 17 },
+  alertPanel: {
+    width: "100%",
+    maxWidth: 540,
+    maxHeight: "88%",
+    borderRadius: 18,
+    overflow: "hidden",
+    backgroundColor: "#FFFFFF",
+  },
+  alertBody: { padding: 20, gap: 6 },
+  alertRow: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+    paddingVertical: 9,
+  },
+  alertIconDanger: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FEF2F2",
+  },
+  alertIconInfo: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EFF6FF",
+  },
+  alertDangerText: { color: "#B91C1C", fontSize: 10, fontWeight: "600", marginTop: 2 },
 });

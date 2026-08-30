@@ -20,7 +20,7 @@ const FILTERS: { id: "all" | TaskKind; label: string }[] = [
 ];
 
 export default function TasksScreen() {
-  const { state, live } = useApp();
+  const { state, live, user } = useApp();
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<"all" | TaskKind>("all");
   const [tab, setTab] = useState<"open" | "done">("open");
@@ -28,6 +28,7 @@ export default function TasksScreen() {
   const list = useMemo(() => {
     return state.tasks
       .filter((t) => {
+        if (t.assigneeId && t.assigneeId !== user?.id) return false;
         const open = t.status !== "completed";
         if (tab === "open" && !open) return false;
         if (tab === "done" && open) return false;
@@ -37,7 +38,7 @@ export default function TasksScreen() {
         return true;
       })
       .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
-  }, [state.tasks, q, kind, tab]);
+  }, [state.tasks, user?.id, q, kind, tab]);
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>

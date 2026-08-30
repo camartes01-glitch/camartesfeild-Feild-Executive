@@ -117,6 +117,8 @@ export type FieldTask = {
   kind: TaskKind;
   title: string;
   bookingRef: string;
+  assigneeId?: string;
+  assignedAt?: string;
   customerName: string;
   customerPhone: string;
   status: TaskStatus;
@@ -255,7 +257,7 @@ export type ExpenseClaim = {
   km: number;
   amountInr: number;
   note: string;
-  status: "draft" | "submitted" | "approved";
+  status: "draft" | "submitted" | "approved" | "rejected";
 };
 
 export type AuditEvent = {

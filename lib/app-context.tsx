@@ -79,6 +79,7 @@ type AppContextValue = {
   requestOt: () => void;
   openShift: Shift | null;
   updateTask: (id: string, patch: Partial<FieldTask>) => void;
+  assignTask: (taskId: string, assigneeId: string) => void;
   addPhoto: (taskId: string, photo: GeoPhoto) => void;
   setTaskStatus: (id: string, status: TaskStatus, label: string) => void;
   verifyOtp: (taskId: string, code: string) => boolean;
@@ -127,6 +128,8 @@ type AppContextValue = {
     days: number;
     reason: string;
   }) => void;
+  reviewLeave: (id: string, status: "approved" | "rejected") => void;
+  reviewExpense: (id: string, status: "approved" | "rejected") => void;
   resetDemo: () => void;
   audit: (label: string) => void;
   refreshVendors: () => Promise<void>;
@@ -530,6 +533,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const assignTask = useCallback(
+    (taskId: string, assigneeId: string) => {
+      const assignee = USERS.find((person) => person.id === assigneeId);
+      if (!assignee) return;
+      const at = new Date().toISOString();
+      setState((s) => ({
+        ...s,
+        tasks: s.tasks.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                assigneeId,
+                assignedAt: at,
+                timeline: [
+                  ...task.timeline,
+                  {
+                    id: `ev-${Date.now()}`,
+                    at,
+                    label: `Dispatch assigned to ${assignee.name}`,
+                  },
+                ],
+              }
+            : task,
+        ),
+      }));
+      audit(`Dispatch assigned ${taskId} to ${assignee.employeeId}`);
+    },
+    [audit],
+  );
+
   const addPhoto = useCallback((taskId: string, photo: GeoPhoto) => {
     setState((s) => {
       if (s.vendors.some((v) => v.id === taskId)) {
@@ -784,6 +817,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [audit],
   );
 
+  const reviewLeave = useCallback(
+    (id: string, status: "approved" | "rejected") => {
+      setState((s) => ({
+        ...s,
+        leaves: s.leaves.map((leave) => (leave.id === id ? { ...leave, status } : leave)),
+      }));
+      audit(`Leave ${id} ${status} by operations`);
+    },
+    [audit],
+  );
+
+  const reviewExpense = useCallback(
+    (id: string, status: "approved" | "rejected") => {
+      setState((s) => ({
+        ...s,
+        expenses: s.expenses.map((expense) => (expense.id === id ? { ...expense, status } : expense)),
+      }));
+      audit(`Expense ${id} ${status} by operations`);
+    },
+    [audit],
+  );
+
   const logVendorVisit = useCallback(
     (input: {
       vendorId: string;
@@ -994,6 +1049,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestOt,
     openShift,
     updateTask,
+    assignTask,
     addPhoto,
     setTaskStatus,
     verifyOtp,
@@ -1012,6 +1068,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     onboardVendor,
     triggerSos,
     requestLeave,
+    reviewLeave,
+    reviewExpense,
     resetDemo,
     audit,
     refreshVendors,

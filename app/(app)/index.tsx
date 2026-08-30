@@ -42,7 +42,7 @@ export default function HomeScreen() {
   const today = istYmd();
   const tomorrow = addYmd(today, 1);
   const openAll = [...state.tasks]
-    .filter((t) => t.status !== "completed")
+    .filter((t) => t.status !== "completed" && (!t.assigneeId || t.assigneeId === user?.id))
     .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
   const todayStops = openAll.filter((t) => t.scheduledFor.slice(0, 10) === today);
   const beat = todayStops.length ? todayStops : openAll.filter((t) => t.scheduledFor.slice(0, 10) !== tomorrow);
