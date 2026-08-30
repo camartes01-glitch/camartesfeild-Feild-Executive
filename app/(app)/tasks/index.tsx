@@ -6,6 +6,7 @@ import { Chip } from "@/components/chips";
 import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
+import { checkInTarget } from "@/lib/field-ops";
 import { formatKm, haversineKm } from "@/lib/geo";
 import { formatWhen } from "@/lib/hours";
 import type { TaskKind } from "@/lib/types";
@@ -43,16 +44,28 @@ export default function TasksScreen() {
     <ScrollView contentContainerStyle={styles.wrap}>
       <Muted>Address checks, store pickups, deliveries, returns and hub counts.</Muted>
       <TextInput
+        nativeID="task-search"
+        accessibilityLabel="Search tasks by customer, booking, or area"
         placeholder="Search customer, booking, area…"
         value={q}
         onChangeText={setQ}
         style={styles.search}
       />
       <View style={styles.row}>
-        <Pressable onPress={() => setTab("open")} style={[styles.tab, tab === "open" && styles.tabOn]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: tab === "open" }}
+          onPress={() => setTab("open")}
+          style={[styles.tab, tab === "open" && styles.tabOn]}
+        >
           <Text style={tab === "open" ? styles.tabOnText : styles.tabText}>Open</Text>
         </Pressable>
-        <Pressable onPress={() => setTab("done")} style={[styles.tab, tab === "done" && styles.tabOn]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: tab === "done" }}
+          onPress={() => setTab("done")}
+          style={[styles.tab, tab === "done" && styles.tabOn]}
+        >
           <Text style={tab === "done" ? styles.tabOnText : styles.tabText}>Completed</Text>
         </Pressable>
       </View>
@@ -68,10 +81,7 @@ export default function TasksScreen() {
       ) : (
         list.map((t) => {
           const youDist = live
-            ? haversineKm(
-                live,
-                t.kind === "delivery" && t.status === "assigned" ? t.store.geo : t.customerPlace.geo,
-              )
+            ? haversineKm(live, checkInTarget(t))
             : null;
           return (
             <Pressable key={t.id} onPress={() => router.push(`/(app)/tasks/${t.id}`)}>

@@ -17,7 +17,7 @@ import { primaryService } from "@/lib/camartes-services";
 import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
 import { formatKm, haversineKm } from "@/lib/geo";
-import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity, evaluateShiftClockIn } from "@/lib/field-ops";
+import { ATTEMPT_LABELS, CHECK_IN_KM, checkInTarget, classifyActivity, evaluateShiftClockIn, nextCheckInStage } from "@/lib/field-ops";
 import { clampServices, interestFromOutcome, normalizeOutcome, statusFromInterest } from "@/lib/vendor-onboard";
 import type {
   AppState,
@@ -42,7 +42,8 @@ import type {
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v9";
+const KEY = "camartes-field-v10";
+const HANDOVER_PIN_TTL_MS = 15 * 60 * 1000;
 
 export type LocationMode = "gps" | string;
 
@@ -213,7 +214,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ready) return;
-    void AsyncStorage.setItem(KEY, JSON.stringify(state));
+    const timer = setTimeout(() => {
+      void AsyncStorage.setItem(KEY, JSON.stringify(state)).catch((error) => {
+        console.warn("Could not save Camartes Field state", error);
+      });
+    }, 300);
+    return () => clearTimeout(timer);
   }, [state, ready]);
 
   const refreshVendors = useCallback(async () => {
@@ -243,35 +249,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [ready, refreshVendors]);
 
   useEffect(() => {
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const unsub = NetInfo.addEventListener((n) => {
-      const on = !!n.isConnected;
-      setOnline(on);
-      if (!on) {
-        if (retryTimer) clearTimeout(retryTimer);
-        return;
-      }
-      setState((s) => ({
-        ...s,
-        offlineQueue: s.offlineQueue.map((q) =>
-          q.synced
-            ? q
-            : { ...q, retries: (q.retries ?? 0) + 1, lastRetryAt: new Date().toISOString() },
-        ),
-      }));
-      retryTimer = setTimeout(() => {
-        setState((s) => ({
-          ...s,
-          offlineQueue: s.offlineQueue.map((q) =>
-            q.synced ? q : { ...q, synced: true, lastRetryAt: new Date().toISOString() },
-          ),
-        }));
-      }, 1600);
+      setOnline(!!n.isConnected);
     });
-    return () => {
-      unsub();
-      if (retryTimer) clearTimeout(retryTimer);
-    };
+    return unsub;
   }, []);
 
   const persistPing = useCallback((ping: LocationPing) => {
@@ -303,7 +284,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({
         ...s,
         offlineQueue: [
-          { id: `q-${Date.now()}`, at: new Date().toISOString(), label, synced: false },
+          { id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: new Date().toISOString(), label, synced: false },
           ...s.offlineQueue,
         ],
       }));
@@ -520,8 +501,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...s,
       shifts: s.shifts.map((sh) => (!sh.clockOut ? { ...sh, otRequested: true } : sh)),
     }));
+    queueIfOffline("Overtime request");
     audit("Overtime requested for current shift");
-  }, [audit]);
+  }, [queueIfOffline, audit]);
 
   const updateTask = useCallback((id: string, patch: Partial<FieldTask>) => {
     setState((s) => ({
@@ -597,21 +579,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const verifyOtp = useCallback((taskId: string, code: string) => {
     const entered = code.trim();
-    let ok = false;
-    setState((s) => {
-      const task = s.tasks.find((t) => t.id === taskId);
-      if (!task?.otpCode || !task.otpGeneratedAt || task.otpCode !== entered) return s;
-      ok = true;
-      return {
-        ...s,
-        tasks: s.tasks.map((t) =>
-          t.id === taskId ? { ...t, otpVerified: true, customerConfirmed: true } : t,
-        ),
-      };
-    });
-    if (ok) audit(`In-app OTP confirmed on ${taskId}`);
-    return ok;
-  }, [audit]);
+    const task = state.tasks.find((t) => t.id === taskId);
+    const generatedAt = task?.otpGeneratedAt ? Date.parse(task.otpGeneratedAt) : Number.NaN;
+    const expired = !Number.isFinite(generatedAt) || Date.now() - generatedAt > HANDOVER_PIN_TTL_MS;
+    if (!task?.otpCode || task.otpCode !== entered || expired) return false;
+    setState((s) => ({
+      ...s,
+      tasks: s.tasks.map((t) =>
+        t.id === taskId ? { ...t, otpVerified: true, customerConfirmed: true } : t,
+      ),
+    }));
+    queueIfOffline(`Handover PIN ${taskId}`);
+    audit(`In-app OTP confirmed on ${taskId}`);
+    return true;
+  }, [state.tasks, queueIfOffline, audit]);
 
   const matchSerial = useCallback((taskId: string, serial: string) => {
     const task = state.tasks.find((t) => t.id === taskId);
@@ -627,16 +608,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!hit) return false;
     const next = Array.from(new Set([...(task.scannedSerials ?? []), hit.serial]));
     updateTask(taskId, { scannedSerials: next });
+    queueIfOffline(`Serial match ${taskId}`);
     audit(`Serial ${hit.serial} matched on ${taskId}`);
     return true;
-  }, [state.tasks, updateTask, audit]);
+  }, [state.tasks, updateTask, queueIfOffline, audit]);
 
   const checkInTask = useCallback(
     (taskId: string) => {
       const task = state.tasks.find((t) => t.id === taskId);
       if (!task) return "Task not found.";
+      if (
+        (task.kind === "delivery" || task.kind === "return") &&
+        task.storeCheckedInAt &&
+        task.customerCheckedInAt
+      ) {
+        return "Both route stops are already checked in.";
+      }
       const geo = geoFromSelection(locationMode, live);
       if (!geo) return "No GPS fix.";
+      const stage = nextCheckInStage(task);
       const target = checkInTarget(task);
       const km = haversineKm(geo, target);
       if (km > CHECK_IN_KM) {
@@ -651,9 +641,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ...t,
                 checkedInAt: at,
                 checkedInGeo: geo,
+                ...(stage === "store"
+                  ? { storeCheckedInAt: at, storeCheckedInGeo: geo }
+                  : { customerCheckedInAt: at, customerCheckedInGeo: geo }),
                 status: t.status === "assigned" ? "in_progress" : t.status,
                 startedAt: t.startedAt ?? at,
-                timeline: [...t.timeline, { id: `ev-${Date.now()}`, at, label: `GPS check-in · ${formatKm(km)}` }],
+                timeline: [
+                  ...t.timeline,
+                  {
+                    id: `ev-${Date.now()}`,
+                    at,
+                    label: `GPS check-in · ${stage === "store" ? "store" : "customer"} · ${formatKm(km)}`,
+                  },
+                ],
               }
             : t,
         ),
@@ -692,13 +692,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const saveKitCondition = useCallback((taskId: string, which: "pickup" | "return", condition: KitCondition) => {
     updateTask(taskId, which === "pickup" ? { kitPickupCondition: condition } : { kitReturnCondition: condition });
+    queueIfOffline(`Kit ${which} condition ${taskId}`);
     audit(`Kit ${which} condition ${condition.overall} on ${taskId}`);
-  }, [updateTask, audit]);
+  }, [updateTask, queueIfOffline, audit]);
 
   const saveSignature = useCallback((taskId: string, svg: string) => {
     updateTask(taskId, { signatureSvg: svg });
+    queueIfOffline(`POD signature ${taskId}`);
     audit(`POD signature captured on ${taskId}`);
-  }, [updateTask, audit]);
+  }, [updateTask, queueIfOffline, audit]);
 
   const sendWhatsApp = useCallback(
     (taskId: string, kind: "eta" | "delivered" | "collected") => {
@@ -723,9 +725,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (report: Omit<DamageReport, "id" | "at">) => {
       const row: DamageReport = { ...report, id: `DM-${Date.now()}`, at: new Date().toISOString() };
       setState((s) => ({ ...s, damages: [row, ...s.damages] }));
+      queueIfOffline(`Damage report ${report.taskId}`);
       audit(`Damage reported ${report.serial}`);
     },
-    [audit],
+    [queueIfOffline, audit],
   );
 
   const addExpense = useCallback((claim: Omit<ExpenseClaim, "id" | "status">) => {
@@ -736,8 +739,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...s.expenses,
       ],
     }));
+    queueIfOffline(`Expense ₹${claim.amountInr}`);
     audit(`Expense ₹${claim.amountInr} submitted`);
-  }, [audit]);
+  }, [queueIfOffline, audit]);
 
   const markTraining = useCallback((id: string) => {
     setState((s) => ({
@@ -752,13 +756,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const triggerSos = useCallback(() => {
     const { manager, km } = cityManager;
-    audit(`SOS raised — ${manager.city} city manager ${manager.name} (${formatKm(km)})`);
+    const dial = () => {
+      audit(`Emergency call opened — ${manager.city} city manager ${manager.name} (${formatKm(km)})`);
+      void Linking.openURL(`tel:${manager.phone.replace(/\s/g, "")}`);
+    };
     Alert.alert(
-      "SOS sent",
-      `${manager.name}, ${manager.city} city manager, is being called.\n${manager.phone}`,
+      live ? "Call city manager?" : "GPS unavailable",
+      live
+        ? `${manager.name} is the nearest city manager (${formatKm(km)} away).\n${manager.phone}`
+        : `The app cannot choose the nearest manager without GPS. Call the default ${manager.city} manager, ${manager.name}?\n${manager.phone}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Call", style: "destructive", onPress: dial },
+      ],
     );
-    void Linking.openURL(`tel:${manager.phone.replace(/\s/g, "")}`);
-  }, [audit, cityManager]);
+  }, [audit, cityManager, live]);
 
   const setLanguage = useCallback((language: Lang) => {
     setState((s) => ({ ...s, language }));
@@ -779,9 +791,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         submittedAt: new Date().toISOString(),
       };
       setState((s) => ({ ...s, leaves: [req, ...s.leaves] }));
+      queueIfOffline(`Leave request ${input.from}`);
       audit(`Leave requested ${input.type} ${input.from}`);
     },
-    [audit],
+    [queueIfOffline, audit],
   );
 
   const logVendorVisit = useCallback(
@@ -916,10 +929,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }),
       }));
       const vendor = state.vendors.find((v) => v.id === vendorId);
+      queueIfOffline(`Onboard vendor ${vendor?.name ?? vendorId}`);
       audit(`Onboarded ${vendor?.name ?? vendorId} as ${code}`);
       return code;
     },
-    [audit, state.vendors],
+    [audit, queueIfOffline, state.vendors],
   );
 
   const addWalkInVendor = useCallback(
@@ -959,10 +973,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         geoApprox: !live,
       };
       setState((s) => ({ ...s, vendors: [vendor, ...s.vendors] }));
+      queueIfOffline(`Walk-in lead ${vendor.name}`);
       audit(`Walk-in onboarding lead ${vendor.name}`);
       return vendor.id;
     },
-    [live, audit],
+    [live, queueIfOffline, audit],
   );
 
   const resetDemo = useCallback(() => {

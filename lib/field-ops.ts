@@ -185,10 +185,26 @@ export function slaState(task: FieldTask, now = new Date()): SlaState {
   return { remainingMin, dueAt: task.scheduledFor, tone, label };
 }
 
+export type TaskCheckInStage = "store" | "customer";
+
+export function nextCheckInStage(task: FieldTask): TaskCheckInStage {
+  if (task.kind === "delivery") return task.storeCheckedInAt ? "customer" : "store";
+  if (task.kind === "return") return task.customerCheckedInAt ? "store" : "customer";
+  return task.kind === "inventory" ? "store" : "customer";
+}
+
+export function checkInProgress(task: FieldTask): { done: number; total: number } {
+  if (task.kind === "delivery" || task.kind === "return") {
+    return {
+      done: Number(Boolean(task.storeCheckedInAt)) + Number(Boolean(task.customerCheckedInAt)),
+      total: 2,
+    };
+  }
+  return { done: task.checkedInAt ? 1 : 0, total: 1 };
+}
+
 export function checkInTarget(task: FieldTask): GeoPoint {
-  if (task.kind === "delivery" && task.status === "assigned") return task.store.geo;
-  if (task.kind === "inventory") return task.store.geo;
-  return task.customerPlace.geo;
+  return nextCheckInStage(task) === "store" ? task.store.geo : task.customerPlace.geo;
 }
 
 export function classifyActivity(

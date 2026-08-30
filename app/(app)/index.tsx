@@ -149,6 +149,8 @@ export default function HomeScreen() {
               hint="Lights, brakes, bag straps"
             />
             <TextInput
+              nativeID="clock-in-override"
+              accessibilityLabel="Clock-in override reason"
               placeholder="Override if you are far from first stop and outside login hours"
               value={override}
               onChangeText={setOverride}

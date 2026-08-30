@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
 import { colors, radius } from "@/constants/theme";
 
@@ -40,6 +41,8 @@ export function Button({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
       onPress={onPress}
       disabled={disabled}
       style={[
@@ -67,11 +70,22 @@ export function Button({
   );
 }
 
-export function Field({ label, ...props }: TextInputProps & { label: string }) {
+export function Field({ label, nativeID, ...props }: TextInputProps & { label: string }) {
+  const generatedId = useId();
+  const inputId = nativeID ?? generatedId;
+  const labelId = `${inputId}-label`;
+
   return (
     <View style={{ gap: 6 }}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput placeholderTextColor={colors.muted} style={styles.input} {...props} />
+      <Text nativeID={labelId} style={styles.label}>{label}</Text>
+      <TextInput
+        nativeID={inputId}
+        accessibilityLabel={label}
+        accessibilityLabelledBy={labelId}
+        placeholderTextColor={colors.muted}
+        style={styles.input}
+        {...props}
+      />
     </View>
   );
 }

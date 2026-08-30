@@ -76,6 +76,8 @@ export function GeoCamera({ taskId, checkpoint }: { taskId: string; checkpoint: 
   return (
     <View style={{ gap: 8 }}>
       <TextInput
+        nativeID={`photo-note-${taskId}-${checkpoint.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
+        accessibilityLabel={`Optional note for ${checkpoint} photo`}
         placeholder="Optional note (tower, serial, customer…)"
         value={note}
         onChangeText={setNote}

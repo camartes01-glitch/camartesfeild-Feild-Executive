@@ -15,6 +15,8 @@ export function Chip({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!selected }}
       onPress={onPress}
       style={[
         styles.chip,
@@ -51,7 +53,12 @@ export function CheckRow({
   hint?: string;
 }) {
   return (
-    <Pressable onPress={onToggle} style={[styles.check, checked && styles.checkOn]}>
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      onPress={onToggle}
+      style={[styles.check, checked && styles.checkOn]}
+    >
       <View style={[styles.box, checked && styles.boxOn]}>
         <Text style={styles.tick}>{checked ? "✓" : ""}</Text>
       </View>

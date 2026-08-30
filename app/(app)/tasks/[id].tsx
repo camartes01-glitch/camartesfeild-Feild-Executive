@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { Button, Card, Muted } from "@/components/ui";
 import { CheckRow, Chip, ChipWrap, StepRow } from "@/components/chips";
@@ -9,7 +9,7 @@ import { SignaturePad } from "@/components/signature-pad";
 import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
-import { ATTEMPT_LABELS, CHECK_IN_KM, KIT_GRADES, checkInTarget } from "@/lib/field-ops";
+import { ATTEMPT_LABELS, CHECK_IN_KM, KIT_GRADES, checkInProgress, checkInTarget, nextCheckInStage } from "@/lib/field-ops";
 import { formatCoord, formatKm, haversineKm, mapsDirUrl } from "@/lib/geo";
 import { formatWhen } from "@/lib/hours";
 import { t } from "@/lib/i18n";
@@ -56,24 +56,40 @@ export default function TaskDetailScreen() {
   const storeCustKm = haversineKm(task.store.geo, task.customerPlace.geo);
   const youStore = haversineKm(you, task.store.geo);
   const youCust = haversineKm(you, task.customerPlace.geo);
+  const checkIns = checkInProgress(task);
+  const checkInsDone = checkIns.done === checkIns.total;
+  const nextStage = nextCheckInStage(task);
   const nextLeg =
-    task.kind === "return"
-      ? { label: "Customer (pickup)", place: task.customerPlace, km: youCust }
-      : task.kind === "delivery" && task.status === "assigned"
-        ? { label: "Store (pickup)", place: task.store, km: youStore }
-        : { label: "Customer", place: task.customerPlace, km: youCust };
+    nextStage === "store"
+      ? {
+          label: task.kind === "return" ? "Store (drop)" : "Store (pickup)",
+          place: task.store,
+          km: youStore,
+        }
+      : {
+          label: task.kind === "return" ? "Customer (pickup)" : "Customer",
+          place: task.customerPlace,
+          km: youCust,
+        };
 
   const photosOk = (checkpoint: string) => task.photos.some((p) => p.checkpoint === checkpoint);
 
   function complete() {
+    if (current.status === "blocked") {
+      Alert.alert("Retry required", "Restart this stop after a failed attempt before marking it complete.");
+      return;
+    }
     const need = checkpoints(current.kind);
     const missing = need.filter((c) => !photosOk(c));
     if (missing.length) {
       Alert.alert("Photos needed", `Add geotagged photos first: ${missing.join(", ")}`);
       return;
     }
-    if (!current.checkedInAt) {
-      Alert.alert("GPS check-in", `Check in within ${Math.round(CHECK_IN_KM * 1000)} m of the stop (live GPS).`);
+    if (checkIns.done < checkIns.total) {
+      Alert.alert(
+        "GPS check-in",
+        `Complete ${checkIns.total - checkIns.done} remaining route check-in${checkIns.total - checkIns.done === 1 ? "" : "s"} within ${Math.round(CHECK_IN_KM * 1000)} m.`,
+      );
       return;
     }
     if (current.kind === "address_verification" && current.addressMatch === "unverified") {
@@ -81,7 +97,7 @@ export default function TaskDetailScreen() {
       return;
     }
     if (current.kind === "vendor_visit") {
-      const visited = state.vendorVisits.some((v) => v.vendorId === current.vendorId) || current.photos.length > 0;
+      const visited = state.vendorVisits.some((v) => v.vendorId === current.vendorId);
       if (!visited) {
         Alert.alert("Visit proof", "Log the visit on the Onboard tab (interest + next meeting).");
         return;
@@ -110,7 +126,10 @@ export default function TaskDetailScreen() {
     }
     if (current.kind === "inventory") {
       const missing = current.items.filter(
-        (i) => current.inventoryCounted?.[i.sku] == null || Number.isNaN(Number(current.inventoryCounted[i.sku])),
+        (i) => {
+          const count = current.inventoryCounted?.[i.sku];
+          return count == null || !Number.isInteger(count) || count < 0;
+        },
       );
       if (missing.length) {
         Alert.alert("Count required", "Enter a counted qty for every SKU on this bay.");
@@ -136,7 +155,7 @@ export default function TaskDetailScreen() {
   const pinDone = task.kind !== "delivery" && task.kind !== "return" ? true : !!task.otpVerified;
   const sigDone = task.kind !== "delivery" && task.kind !== "return" ? true : !!task.signatureSvg;
   const steps = [
-    { label: "GPS check-in", done: !!task.checkedInAt },
+    { label: `GPS check-in${checkIns.total > 1 ? `s (${checkIns.done}/${checkIns.total})` : ""}`, done: checkInsDone },
     { label: "Geotagged photos", done: photosMissing.length === 0 },
     { label: "Kit condition", done: kitDone },
     { label: "Serials", done: serialsDone },
@@ -199,20 +218,25 @@ export default function TaskDetailScreen() {
         <Text style={styles.h}>Outlet GPS check-in</Text>
         <Muted>
           Live GPS at the stop — not the storefront photo. Stay within {Math.round(CHECK_IN_KM * 1000)} m of{" "}
-          {task.kind === "delivery" && task.status === "assigned" ? task.store.area : task.customerPlace.area}.
+          {nextStage === "store" ? task.store.area : task.customerPlace.area}.
         </Muted>
-        {task.checkedInAt ? (
+        {checkInsDone ? (
           <View style={styles.okBox}>
-            <Text style={styles.okTxt}>Checked in {formatWhen(task.checkedInAt)}</Text>
+            <Text style={styles.okTxt}>
+              GPS check-in{checkIns.total > 1 ? "s" : ""} complete · {checkIns.done}/{checkIns.total}
+            </Text>
           </View>
         ) : (
-          <Button
-            label="Check in with GPS"
-            onPress={() => {
-              const err = checkInTask(task.id);
-              if (err) Alert.alert("Check-in blocked", err);
-            }}
-          />
+          <>
+            {checkIns.done > 0 ? <Muted>{checkIns.done}/{checkIns.total} route check-ins complete.</Muted> : null}
+            <Button
+              label={`Check in at ${nextStage === "store" ? "store" : "customer"} with GPS`}
+              onPress={() => {
+                const err = checkInTask(task.id);
+                if (err) Alert.alert("Check-in blocked", err);
+              }}
+            />
+          </>
         )}
         {live ? (
           <Muted>
@@ -236,7 +260,14 @@ export default function TaskDetailScreen() {
           <CheckRow label="Scuff" checked={kitScuff} onToggle={() => setKitScuff((v) => !v)} />
           <CheckRow label="Dent" checked={kitDent} onToggle={() => setKitDent((v) => !v)} />
           <CheckRow label="Missing parts" checked={kitMissing} onToggle={() => setKitMissing((v) => !v)} />
-          <TextInput value={kitNotes} onChangeText={setKitNotes} placeholder="Bag notes" style={styles.qty} />
+          <TextInput
+            nativeID={`kit-notes-${task.id}`}
+            accessibilityLabel="Kit condition notes"
+            value={kitNotes}
+            onChangeText={setKitNotes}
+            placeholder="Bag notes"
+            style={styles.qty}
+          />
           <Button
             label="Save kit condition"
             onPress={() => {
@@ -274,7 +305,14 @@ export default function TaskDetailScreen() {
               />
             ))}
           </ChipWrap>
-          <TextInput value={attemptNote} onChangeText={setAttemptNote} placeholder="What happened on this try?" style={styles.qty} />
+          <TextInput
+            nativeID={`attempt-note-${task.id}`}
+            accessibilityLabel="Failed attempt details"
+            value={attemptNote}
+            onChangeText={setAttemptNote}
+            placeholder="What happened on this try?"
+            style={styles.qty}
+          />
           <Button
             label="Log failed attempt"
             variant="danger"
@@ -331,14 +369,22 @@ export default function TaskDetailScreen() {
               </Muted>
               {task.kind === "inventory" ? (
                 <TextInput
+                  nativeID={`inventory-count-${task.id}-${item.sku}`}
+                  accessibilityLabel={`Counted quantity for ${item.name}`}
                   keyboardType="number-pad"
                   placeholder="Counted qty"
-                  value={task.inventoryCounted?.[item.sku] != null ? String(task.inventoryCounted[item.sku]) : ""}
-                  onChangeText={(v) =>
-                    updateTask(task.id, {
-                      inventoryCounted: { ...task.inventoryCounted, [item.sku]: Number(v) },
-                    })
+                  value={
+                    task.inventoryCounted?.[item.sku] != null &&
+                    !Number.isNaN(task.inventoryCounted[item.sku])
+                      ? String(task.inventoryCounted[item.sku])
+                      : ""
                   }
+                  onChangeText={(v) => {
+                    const value = v.trim() === "" ? Number.NaN : Number(v);
+                    updateTask(task.id, {
+                      inventoryCounted: { ...task.inventoryCounted, [item.sku]: value },
+                    });
+                  }}
                   style={styles.qty}
                 />
               ) : null}
@@ -382,7 +428,7 @@ export default function TaskDetailScreen() {
           ) : (
             <>
               <Muted>
-                Create the 4-digit PIN in this app and show it to the customer. Do not send it by SMS.
+                Create the 4-digit PIN in this app and show it to the customer. It expires after 15 minutes. Do not send it by SMS.
               </Muted>
               {task.otpCode && task.otpGeneratedAt ? (
                 pinStep === "show" ? (
@@ -404,6 +450,8 @@ export default function TaskDetailScreen() {
                   <>
                     <Muted>PIN is hidden. Customer types the 4 digits they just saw.</Muted>
                     <TextInput
+                      nativeID={`handover-pin-${task.id}`}
+                      accessibilityLabel="Customer handover PIN"
                       value={otp}
                       onChangeText={setOtp}
                       placeholder="Customer types PIN"
@@ -415,7 +463,9 @@ export default function TaskDetailScreen() {
                     <Button
                       label={t(lang, "verifyOtp")}
                       onPress={() => {
-                        if (!verifyOtp(task.id, otp)) Alert.alert("Wrong PIN", "It must match the PIN that was shown.");
+                        if (!verifyOtp(task.id, otp)) {
+                          Alert.alert("Wrong or expired PIN", "Enter the latest PIN shown, or generate a new one.");
+                        }
                         else setOtp("");
                       }}
                     />
@@ -434,14 +484,7 @@ export default function TaskDetailScreen() {
               )}
             </>
           )}
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={{ flex: 1, marginRight: 8 }}>Customer confirmed kit handover</Text>
-            <Switch
-              value={!!task.customerConfirmed}
-              onValueChange={(v) => updateTask(task.id, { customerConfirmed: v })}
-              trackColor={{ true: colors.primary }}
-            />
-          </View>
+          <Muted>Customer confirmation is recorded only after the handover PIN is verified.</Muted>
           <Button label="WhatsApp ETA" variant="outline" onPress={() => sendWhatsApp(task.id, "eta")} />
           <Button
             label={task.kind === "return" ? "WhatsApp collected" : "WhatsApp delivered"}
@@ -471,7 +514,14 @@ export default function TaskDetailScreen() {
               {(task.scannedSerials ?? []).includes(item.serial) ? "✓" : "○"} {item.name} · {item.serial}
             </Text>
           ))}
-          <TextInput value={serial} onChangeText={setSerial} placeholder="Full serial or last 4 digits" style={styles.qty} />
+          <TextInput
+            nativeID={`serial-${task.id}`}
+            accessibilityLabel="Equipment serial number"
+            value={serial}
+            onChangeText={setSerial}
+            placeholder="Full serial or last 4 digits"
+            style={styles.qty}
+          />
           <Button
             label={t(lang, "scanSerial")}
             variant="outline"
@@ -486,7 +536,14 @@ export default function TaskDetailScreen() {
       {task.status !== "completed" ? (
         <Card>
           <Text style={styles.h}>{t(lang, "damage")}</Text>
-          <TextInput value={dmg} onChangeText={setDmg} placeholder="What happened?" style={styles.qty} />
+          <TextInput
+            nativeID={`damage-note-${task.id}`}
+            accessibilityLabel="Damage or exception details"
+            value={dmg}
+            onChangeText={setDmg}
+            placeholder="What happened?"
+            style={styles.qty}
+          />
           <Button
             label="Log exception"
             variant="ghost"
@@ -549,6 +606,7 @@ export default function TaskDetailScreen() {
         <Button
           label={stepsLeft ? `Mark complete · ${stepsLeft} left` : "Mark complete"}
           variant={task.status === "assigned" ? "outline" : "primary"}
+          disabled={task.status === "blocked"}
           onPress={complete}
         />
       ) : (
