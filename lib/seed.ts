@@ -115,6 +115,32 @@ function event(id: string, at: string, label: string) {
   return { id, at, label };
 }
 
+const DEMO_ANCHOR_YMD = "2026-08-27";
+
+function currentIstYmd(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function addDays(ymd: string, days: number) {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function rebaseDemoDate(value: string, today = currentIstYmd()) {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(value)) return value;
+  const sourceYmd = value.slice(0, 10);
+  const offsetDays = Math.round(
+    (Date.parse(`${sourceYmd}T00:00:00Z`) - Date.parse(`${DEMO_ANCHOR_YMD}T00:00:00Z`)) /
+      86_400_000,
+  );
+  return `${addDays(today, offsetDays)}${value.slice(10)}`;
+}
+
 const TASKS: FieldTask[] = [
   {
     id: "TSK-4811",
@@ -499,13 +525,41 @@ const LEAVES: LeaveRequest[] = [
 ];
 
 export function createInitialState(): AppState {
+  const today = currentIstYmd();
+  const tasks = structuredClone(TASKS).map((task) => ({
+    ...task,
+    scheduledFor: rebaseDemoDate(task.scheduledFor, today),
+    timeline: task.timeline.map((row) => ({ ...row, at: rebaseDemoDate(row.at, today) })),
+    startedAt: task.startedAt ? rebaseDemoDate(task.startedAt, today) : undefined,
+    completedAt: task.completedAt ? rebaseDemoDate(task.completedAt, today) : undefined,
+  }));
+  const shifts = structuredClone(SHIFTS).map((row) => ({
+    ...row,
+    id: `sh-${rebaseDemoDate(row.date, today)}`,
+    date: rebaseDemoDate(row.date, today),
+    clockIn: rebaseDemoDate(row.clockIn, today),
+    clockOut: row.clockOut ? rebaseDemoDate(row.clockOut, today) : undefined,
+  }));
+  const leaves = structuredClone(LEAVES).map((row) => ({
+    ...row,
+    from: rebaseDemoDate(row.from, today),
+    to: rebaseDemoDate(row.to, today),
+    submittedAt: rebaseDemoDate(row.submittedAt, today),
+  }));
+  const vendors = structuredClone(VENDORS).map((vendor) => ({
+    ...vendor,
+    lastVisitedAt: vendor.lastVisitedAt ? rebaseDemoDate(vendor.lastVisitedAt, today) : undefined,
+    nextMeetingAt: vendor.nextMeetingAt ? rebaseDemoDate(vendor.nextMeetingAt, today) : undefined,
+    nextShootDate: vendor.nextShootDate ? rebaseDemoDate(vendor.nextShootDate, today) : undefined,
+  }));
+
   return {
     userId: null,
     language: "en",
     deviceBoundId: null,
-    tasks: structuredClone(TASKS),
-    shifts: structuredClone(SHIFTS),
-    leaves: structuredClone(LEAVES),
+    tasks,
+    shifts,
+    leaves,
     pings: [],
     damages: [],
     expenses: [
@@ -519,28 +573,28 @@ export function createInitialState(): AppState {
       },
       {
         id: "EX-01",
-        date: "2026-08-25",
+        date: rebaseDemoDate("2026-08-25", today),
         km: 18.4,
         amountInr: 220,
         note: "Auto Banjara → Kondapur delivery",
         status: "approved",
       },
     ],
-    audit: [{ id: "a0", at: "2026-08-26T07:00:00+05:30", label: "Hyderabad hub roster published" }],
+    audit: [{ id: "a0", at: rebaseDemoDate("2026-08-26T07:00:00+05:30", today), label: "Hyderabad hub roster published" }],
     offlineQueue: [],
     notices: [
       {
         id: "n1",
         title: "Wedding kit SLA",
         body: "BK-88244 Meera Films must be on site by 12:00. Generate the handover PIN in the app (no SMS).",
-        at: "2026-08-26T07:15:00+05:30",
+        at: rebaseDemoDate("2026-08-26T07:15:00+05:30", today),
         read: false,
       },
       {
         id: "n3",
         title: "Vendor onboarding beat",
         body: "Onboard tab is your visit book — Filmfare (interested, next meet 28 Aug), Album Kraft (needs time), Pixel LED and G Anil Kumar today, CamStream not interested.",
-        at: "2026-08-27T07:30:00+05:30",
+        at: rebaseDemoDate("2026-08-27T07:30:00+05:30", today),
         read: false,
       },
     ],
@@ -559,12 +613,12 @@ export function createInitialState(): AppState {
       },
     ],
     leavePolicy: { casual: 6, sick: 6, earned: 12 },
-    vendors: structuredClone(VENDORS),
+    vendors,
     vendorVisits: [
       {
         id: "VV-seed-1",
         vendorId: "vn-studio-filmfare",
-        at: "2026-08-26T16:20:00+05:30",
+        at: rebaseDemoDate("2026-08-26T16:20:00+05:30", today),
         outcome: "interested",
         pitch: "Camartes marketplace — rentals, bookings, LED, WebLive",
         note: "Ramesh wants to see a sample listing before GST paperwork.",
@@ -573,7 +627,7 @@ export function createInitialState(): AppState {
       {
         id: "VV-seed-2",
         vendorId: "vn-album-kraft",
-        at: "2026-08-25T12:10:00+05:30",
+        at: rebaseDemoDate("2026-08-25T12:10:00+05:30", today),
         outcome: "need_time",
         pitch: "Album Designer category on camartes.com",
         note: "Asked for a week — partner is travelling.",
@@ -582,7 +636,7 @@ export function createInitialState(): AppState {
       {
         id: "VV-seed-3",
         vendorId: "vn-weblive-camstream",
-        at: "2026-08-24T17:40:00+05:30",
+        at: rebaseDemoDate("2026-08-24T17:40:00+05:30", today),
         outcome: "not_interested",
         pitch: "Web/Live Services on Camartes",
         note: "Locked into existing vendor until December.",
@@ -619,12 +673,14 @@ export const TEAM: TeamMate[] = [
   },
 ];
 
+const rosterToday = currentIstYmd();
 export const ROSTER: { date: string; window: string; hub: string }[] = [
-  { date: "2026-08-26", window: "09:00–18:00", hub: "Banjara Hills" },
-  { date: "2026-08-27", window: "09:00–18:00", hub: "HITEC City" },
-  { date: "2026-08-28", window: "Off / pending leave", hub: "—" },
-  { date: "2026-08-29", window: "09:00–18:00", hub: "Banjara Hills" },
-  { date: "2026-08-31", window: "10:00–19:00 (wedding OT)", hub: "HITEC City" },
+  { date: addDays(rosterToday, -1), window: "09:00–18:00", hub: "Banjara Hills" },
+  { date: rosterToday, window: "09:00–18:00", hub: "HITEC City" },
+  { date: addDays(rosterToday, 1), window: "09:00–18:00", hub: "Banjara Hills" },
+  { date: addDays(rosterToday, 2), window: "09:00–18:00", hub: "HITEC City" },
+  { date: addDays(rosterToday, 3), window: "10:00–19:00", hub: "Banjara Hills" },
+  { date: addDays(rosterToday, 4), window: "10:00–19:00 (wedding OT)", hub: "HITEC City" },
 ];
 
 export const LOCATION_PRESETS: { id: string; label: string; lat: number; lng: number }[] =

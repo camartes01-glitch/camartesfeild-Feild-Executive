@@ -42,12 +42,25 @@ export default function LoginScreen() {
         <Card>
           <Field
             label={t(lang, "workEmail")}
+            nativeID="login-email"
             autoCapitalize="none"
+            autoComplete="email"
+            textContentType="emailAddress"
             keyboardType="email-address"
             value={email}
             onChangeText={setEmail}
           />
-          <Field label={t(lang, "password")} secureTextEntry value={password} onChangeText={setPassword} />
+          <Field
+            label={t(lang, "password")}
+            nativeID="login-password"
+            autoComplete="current-password"
+            textContentType="password"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+            onSubmitEditing={submit}
+            returnKeyType="done"
+          />
           {error ? <Text style={styles.err}>{error}</Text> : null}
           <Button label={t(lang, "signIn")} onPress={submit} />
           <Muted>Tap a name to fill the demo login. Password is already set.</Muted>

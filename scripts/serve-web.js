@@ -56,21 +56,27 @@ const DOWNLOAD_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Download Camartes Field</title>
+  <title>Download Camartes Field Test</title>
   <style>
-    body { font-family: system-ui, sans-serif; background: #FFF7ED; color: #111827; max-width: 32rem; margin: 48px auto; padding: 0 20px; }
+    body { font-family: system-ui, sans-serif; background: #FFF7ED; color: #111827; max-width: 34rem; margin: 48px auto; padding: 0 20px; }
     a.btn { display: inline-block; background: #FF6B35; color: #fff; font-weight: 800; text-decoration: none; padding: 14px 20px; border-radius: 12px; margin: 8px 8px 8px 0; }
     p { color: #6B7280; line-height: 1.5; }
     code { background: #FFEDD5; padding: 2px 6px; border-radius: 4px; color: #111827; }
+    ul { color: #374151; line-height: 1.6; }
   </style>
 </head>
 <body>
-  <h1>Camartes Field APK</h1>
-  <p>45 MB arm64 release. On the phone: enable <strong>Install unknown apps</strong>, then open the downloaded file.</p>
-  <p><a class="btn" href="https://tmpfiles.org/dl/1787853728.85af0ccb7b79f842/wdwKGU8IE254/camartes-field.apk">Download on this phone (45 MB)</a></p>
-  <p>Use the orange button on the phone. Do not type <code>127.0.0.1</code> into Chrome — that address is the cloud machine, not your device, so the download will fail.</p>
-  <p>Demo: rahul / priya / arjun @ camartes.com · password <code>field2026</code></p>
-  <p>The public file host may expire after a few hours. If the link 404s, ask in this chat and we will post a fresh one.</p>
+  <h1>Camartes Field Test APK</h1>
+  <p>45 MB arm64 build for field-executive testing. Package: <code>com.camartes.field.test</code></p>
+  <p><a class="btn" href="/camartes-field-test.apk">Download APK on this phone</a></p>
+  <p>Or use this public link (expires in about 1 hour):<br /><a href="https://tmpfiles.org/dl/1788111484.f682c6d2b31e852d/wKwRsIl7rmsQ/camartes-field-test.apk">https://tmpfiles.org/dl/1788111484.f682c6d2b31e852d/wKwRsIl7rmsQ/camartes-field-test.apk</a></p>
+  <p>Open this page from <strong>Cursor Preview</strong> on your phone, then tap the orange button. Do not use <code>127.0.0.1</code> — that points to your phone, not the cloud machine.</p>
+  <ul>
+    <li>Enable <strong>Install unknown apps</strong> for your browser or file manager.</li>
+    <li>If Play Protect warns, choose <strong>Install anyway</strong>.</li>
+    <li>Uninstall any old <code>com.camartes.field</code> app if install still fails.</li>
+  </ul>
+  <p>Demo login: <code>rahul@camartes.com</code> · password <code>field2026</code></p>
 </body>
 </html>`;
 
@@ -98,7 +104,7 @@ function sendApk(req, res, file) {
   const size = st.size;
   const headers = {
     "Content-Type": "application/vnd.android.package-archive",
-    "Content-Disposition": 'attachment; filename="camartes-field.apk"',
+    "Content-Disposition": 'attachment; filename="camartes-field-test.apk"',
     "Accept-Ranges": "bytes",
     "Cache-Control": "public, max-age=120",
     "Access-Control-Allow-Origin": "*",

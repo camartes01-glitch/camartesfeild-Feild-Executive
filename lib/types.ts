@@ -152,6 +152,10 @@ export type FieldTask = {
   declineReason?: string;
   checkedInAt?: string;
   checkedInGeo?: GeoPoint;
+  storeCheckedInAt?: string;
+  storeCheckedInGeo?: GeoPoint;
+  customerCheckedInAt?: string;
+  customerCheckedInGeo?: GeoPoint;
   vendorIntel?: VendorIntel;
 };
 

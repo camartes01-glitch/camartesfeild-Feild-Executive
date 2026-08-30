@@ -13,7 +13,7 @@ const LANGS: { id: Lang; label: string }[] = [
 ];
 
 export default function MoreScreen() {
-  const { user, state, logout, resetDemo, setLanguage, triggerSos, cityManager } = useApp();
+  const { user, state, online, logout, resetDemo, setLanguage, triggerSos, cityManager } = useApp();
   const lang = state.language;
 
   return (
@@ -66,10 +66,15 @@ export default function MoreScreen() {
       </Card>
       <Card>
         <Text style={styles.h}>Offline queue</Text>
-        {state.offlineQueue.length === 0 ? <Muted>Nothing waiting to sync.</Muted> : null}
+        <Muted>
+          {online
+            ? "Pending records stay on this device until a Camartes sync endpoint confirms upload."
+            : "Offline — new field records will remain queued on this device."}
+        </Muted>
+        {state.offlineQueue.length === 0 ? <Muted>No offline records are waiting.</Muted> : null}
         {state.offlineQueue.slice(0, 8).map((q) => (
           <Muted key={q.id}>
-            {q.synced ? "Synced" : q.retries ? `Retry ${q.retries}` : "Queued"} · {q.label}
+            {q.synced ? "Uploaded" : "Pending upload"} · {q.label}
           </Muted>
         ))}
       </Card>

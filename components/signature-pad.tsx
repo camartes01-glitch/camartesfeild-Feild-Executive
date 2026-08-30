@@ -57,7 +57,12 @@ export function SignaturePad({
 
   return (
     <View>
-      <View style={styles.wrap} {...responder.panHandlers}>
+      <View
+        accessibilityLabel="Customer signature pad"
+        accessibilityHint="Draw a signature with a finger or pointer"
+        style={styles.wrap}
+        {...responder.panHandlers}
+      >
         <Svg width="100%" height="140">
           <Rect x={0} y={0} width="100%" height="140" fill="#fff" />
           {d ? (
@@ -78,6 +83,7 @@ export function SignaturePad({
         ) : null}
       </View>
       <Pressable
+        accessibilityRole="button"
         onPress={() => {
           setStrokes([]);
           onChange("");
