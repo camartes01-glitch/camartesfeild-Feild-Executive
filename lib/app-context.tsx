@@ -11,11 +11,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { format } from "date-fns";
-import { BANJARA, createInitialState, LOCATION_PRESETS, ROSTER, USERS } from "@/lib/seed";
+import { BANJARA, createEmptyOpsState, createInitialState, LOCATION_PRESETS, ROSTER, USERS } from "@/lib/seed";
 import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
-import { loginCamartes, logoutCamartes } from "@/lib/camartes-auth";
+import { loginFieldOps, logoutFieldOps, restoreFieldOpsSession } from "@/lib/camartes-auth";
 import { isDemoMode, matchDemoPassword } from "@/lib/demo-mode";
-import { probeFieldOps, pushFieldOpsMutation } from "@/lib/field-ops-api";
+import {
+  clearFieldOpsProbeCache,
+  fetchFieldOpsSnapshot,
+  fetchFieldOpsTeam,
+  parseSnapshot,
+  parseTeam,
+  probeFieldOps,
+  pushFieldOpsMutation,
+} from "@/lib/field-ops-api";
 import { buildTeamPresence } from "@/lib/team-presence";
 import { primaryService } from "@/lib/camartes-services";
 import { generateHandoverPin } from "@/lib/otp";
@@ -78,6 +86,7 @@ type AppContextValue = {
   isDemoMode: boolean;
   isOperations: boolean;
   authSource: AuthSession["user"]["source"] | null;
+  directory: FieldUser[];
   fieldOpsAvailable: boolean | null;
   fieldOpsReason: string | null;
   createTask: (input: CreateTaskInput) => string | null;
@@ -175,7 +184,7 @@ function migrateOffline(items: OfflineItem[] | Array<Partial<OfflineItem>> | und
   }));
 }
 
-function mergeState(parsed: Partial<AppState>): AppState {
+function mergeDemoState(parsed: Partial<AppState>): AppState {
   const base = createInitialState();
   const incoming = parsed.tasks ?? [];
   const byId = new Map(incoming.map((t) => [t.id, t]));
@@ -220,6 +229,24 @@ function mergeState(parsed: Partial<AppState>): AppState {
   };
 }
 
+function mergeCachedOpsState(parsed: Partial<AppState>): AppState {
+  const base = createEmptyOpsState();
+  return {
+    ...base,
+    ...parsed,
+    tasks: parsed.tasks ?? [],
+    shifts: parsed.shifts ?? [],
+    leaves: parsed.leaves ?? [],
+    expenses: parsed.expenses ?? [],
+    pings: parsed.pings ?? [],
+    damages: parsed.damages ?? [],
+    audit: parsed.audit ?? [],
+    offlineQueue: migrateOffline(parsed.offlineQueue ?? []),
+    vendors: overlayVendorState(base.vendors, parsed.vendors ?? []),
+    vendorVisits: parsed.vendorVisits ?? [],
+  };
+}
+
 function geoFromSelection(locationMode: LocationMode, live: LiveFix | null) {
   if (locationMode !== "gps") {
     const preset = LOCATION_PRESETS.find((p) => p.id === locationMode);
@@ -247,6 +274,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [gpsMessage, setGpsMessage] = useState<string | null>(null);
   const [gpsTick, setGpsTick] = useState(0);
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [people, setPeople] = useState<FieldUser[]>(USERS);
   const [fieldOpsAvailable, setFieldOpsAvailable] = useState<boolean | null>(null);
   const [fieldOpsReason, setFieldOpsReason] = useState<string | null>(null);
   const [vendorsSync, setVendorsSync] = useState<{
@@ -263,10 +291,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           AsyncStorage.getItem(KEY),
           AsyncStorage.getItem(SESSION_KEY),
         ]);
-        if (raw) setState(mergeState(JSON.parse(raw) as Partial<AppState>));
         if (sessionRaw) {
           const parsed = JSON.parse(sessionRaw) as AuthSession;
-          if (parsed?.user?.id && parsed.user.role) setSession(parsed);
+          if (parsed?.user?.id && parsed.user.role) {
+            setSession(parsed);
+            if (parsed.user.source === "demo") {
+              if (raw) setState(mergeDemoState(JSON.parse(raw) as Partial<AppState>));
+            } else if (raw) {
+              setState(mergeCachedOpsState(JSON.parse(raw) as Partial<AppState>));
+            } else {
+              setState(createEmptyOpsState());
+            }
+          } else if (raw) {
+            setState(mergeDemoState(JSON.parse(raw) as Partial<AppState>));
+          }
+        } else if (raw) {
+          setState(mergeDemoState(JSON.parse(raw) as Partial<AppState>));
         }
       } catch {
         /* seed */
@@ -352,10 +392,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const user = session?.user ?? null;
   const isOperations = user?.role === "operations_manager";
   const directory = useMemo(() => {
-    const byId = new Map(USERS.map((person) => [person.id, person]));
-    if (user) byId.set(user.id, user);
+    if (!user || user.source === "demo") {
+      const byId = new Map(USERS.map((person) => [person.id, person]));
+      if (user) byId.set(user.id, user);
+      return [...byId.values()];
+    }
+    const byId = new Map(people.map((person) => [person.id, person]));
+    byId.set(user.id, user);
     return [...byId.values()];
-  }, [user]);
+  }, [people, user]);
 
   const openShift = useMemo(
     () => state.shifts.find((s) => s.userId === user?.id && !s.clockOut) ?? null,
@@ -521,24 +566,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const device = Platform.OS === "web" ? "web-demo" : `${Platform.OS}-bound`;
     const applyUser = (next: FieldUser, token: string | null) => {
       setSession({ user: next, token });
-      setState((s) => ({
-        ...s,
-        userId: next.id,
-        deviceBoundId: `${next.employeeId}:${device}`,
-      }));
     };
 
     if (isDemoMode() && matchDemoPassword(trimmed, password)) {
       const found = USERS.find((person) => person.email.toLowerCase() === trimmed.toLowerCase());
       if (found) {
         applyUser(found, null);
+        setPeople(USERS);
+        setState((s) => ({ ...mergeDemoState(s), userId: found.id, deviceBoundId: `${found.employeeId}:${device}` }));
         return null;
       }
     }
 
-    const remote = await loginCamartes(trimmed, password);
+    const remote = await loginFieldOps(trimmed, password);
     if (remote.ok) {
+      clearFieldOpsProbeCache();
       applyUser(remote.session.user, remote.session.token);
+      setPeople([remote.session.user]);
+      setState((s) => ({
+        ...createEmptyOpsState(),
+        language: s.language,
+        vendors: s.vendors,
+        userId: remote.session.user.id,
+        deviceBoundId: `${remote.session.user.employeeId}:${device}`,
+        offlineQueue: s.offlineQueue.filter((item) => item.status === "pending"),
+      }));
       return null;
     }
     return remote.error;
@@ -547,10 +599,67 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => {
     const token = session?.token ?? null;
     setSession(null);
+    setPeople(USERS);
     setState((s) => ({ ...s, userId: null }));
     setLive(null);
-    void logoutCamartes(token);
+    void logoutFieldOps(token);
   }, [session?.token]);
+
+  const hydrateFromBackend = useCallback(
+    async (token: string) => {
+      const probe = await probeFieldOps();
+      setFieldOpsAvailable(probe.available);
+      setFieldOpsReason(probe.available ? null : probe.reason);
+      if (!probe.available) return;
+
+      const snapRes = await fetchFieldOpsSnapshot(token);
+      if (!snapRes.ok) {
+        if (snapRes.status === 401) {
+          logout();
+          setFieldOpsReason("Session expired. Sign in again.");
+          return;
+        }
+        setFieldOpsAvailable(false);
+        setFieldOpsReason(snapRes.error);
+        return;
+      }
+
+      const teamRes = await fetchFieldOpsTeam(token);
+      if (!teamRes.ok && teamRes.status === 401) {
+        logout();
+        setFieldOpsReason("Session expired. Sign in again.");
+        return;
+      }
+      const teamPeople = teamRes.ok ? parseTeam(teamRes.body) : [];
+
+      setState((s) => {
+        const parsed = parseSnapshot(snapRes.body, { tasks: s.tasks, shifts: s.shifts });
+        return {
+          ...s,
+          tasks: parsed.tasks,
+          shifts: parsed.shifts,
+          leaves: parsed.leave_requests,
+          expenses: parsed.expenses,
+        };
+      });
+      const parsed = parseSnapshot(snapRes.body);
+      const scoped = teamPeople.length ? teamPeople : parsed.scoped_team;
+      setPeople((current) => {
+        const byId = new Map(current.map((row) => [row.id, row]));
+        if (parsed.principal) byId.set(parsed.principal.id, parsed.principal);
+        for (const row of scoped) byId.set(row.id, row);
+        return [...byId.values()];
+      });
+      if (parsed.principal) {
+        setSession((current) =>
+          current ? { ...current, user: { ...current.user, ...parsed.principal, source: "field_ops" } } : current,
+        );
+      }
+      setFieldOpsAvailable(true);
+      setFieldOpsReason(null);
+    },
+    [logout],
+  );
 
   const clockIn = useCallback(
     (opts?: {
@@ -716,7 +825,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         assignedAt: assignee ? at : undefined,
         customerName,
         customerPhone: input.customerPhone?.trim() || vendor?.phone || "",
-        status: "assigned",
+        status: assignee ? "assigned" : "unassigned",
         scheduledFor: input.dueAt,
         store: BANJARA,
         customerPlace: place,
@@ -1277,9 +1386,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!pending.length) return;
     const probe = await probeFieldOps();
     setFieldOpsAvailable(probe.available);
-    setFieldOpsReason(probe.reason);
+    setFieldOpsReason(probe.available ? null : probe.reason);
+    let anySuccess = false;
+    let expired = false;
     for (const item of pending) {
       const result = await pushFieldOpsMutation(item, session?.token ?? null);
+      if (result.ok) anySuccess = true;
+      if (!result.ok && result.status === 401) expired = true;
       setState((s) => ({
         ...s,
         offlineQueue: s.offlineQueue.map((row) => {
@@ -1294,16 +1407,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           };
         }),
       }));
+      if (expired) break;
     }
-  }, [session?.token, state.offlineQueue]);
+    if (expired) {
+      logout();
+      setFieldOpsReason("Session expired. Sign in again.");
+      return;
+    }
+    if (anySuccess && session?.token && session.user.source !== "demo") {
+      await hydrateFromBackend(session.token);
+    }
+  }, [hydrateFromBackend, logout, session?.token, session?.user.source, state.offlineQueue]);
 
   useEffect(() => {
     if (!ready) return;
     void probeFieldOps().then((probe) => {
       setFieldOpsAvailable(probe.available);
-      setFieldOpsReason(probe.reason);
+      setFieldOpsReason(probe.available ? null : probe.reason);
     });
   }, [ready]);
+
+  useEffect(() => {
+    if (!ready || !session?.token || session.user.source === "demo") return;
+    let cancelled = false;
+    (async () => {
+      const restored = await restoreFieldOpsSession(session.token!);
+      if (cancelled) return;
+      if (!restored.ok) {
+        if (restored.status === 401 || restored.status === 403) {
+          logout();
+          setFieldOpsReason(restored.error);
+        } else {
+          setFieldOpsAvailable(false);
+          setFieldOpsReason(restored.error);
+        }
+        return;
+      }
+      setSession((current) => (current ? { ...current, user: restored.user } : current));
+      await hydrateFromBackend(session.token!);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrateFromBackend, logout, ready, session?.token, session?.user.source]);
 
   useEffect(() => {
     if (!ready || !online) return;
@@ -1350,6 +1496,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isDemoMode: isDemoMode(),
     isOperations,
     authSource: user?.source ?? null,
+    directory,
     fieldOpsAvailable,
     fieldOpsReason,
     createTask,

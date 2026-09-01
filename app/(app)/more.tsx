@@ -69,11 +69,11 @@ export default function MoreScreen() {
         <Text style={styles.h}>Offline queue</Text>
         <Muted>
           {fieldOpsAvailable
-            ? "Field ops API is reachable — pending records will upload."
+            ? "Field Operations backend is reachable — pending records will upload."
             : fieldOpsReason
               ? `Sync waiting: ${fieldOpsReason}`
               : online
-                ? "Pending records stay on this device until a Camartes field-ops endpoint confirms upload."
+                ? "Pending records stay on this device until the Field Operations backend confirms upload."
                 : "Offline — new field records will remain queued on this device."}
         </Muted>
         {state.offlineQueue.length === 0 ? <Muted>No offline records are waiting.</Muted> : null}

@@ -26,6 +26,7 @@ export function KindBadge({ kind }: { kind: TaskKind }) {
 
 export function StatusBadge({ status }: { status: TaskStatus }) {
   const labels: Record<TaskStatus, string> = {
+    unassigned: "Unassigned",
     assigned: "Assigned",
     in_progress: "In progress",
     awaiting_photo: "Needs photo",

@@ -1,51 +1,90 @@
-import { CAMARTES_API } from "@/lib/camartes-api";
-import type { FieldOpsMutation, OfflineItem } from "@/lib/types";
+import { FIELD_OPS_API, fieldOpsApiBaseUrl } from "@/lib/field-ops-config";
+import { mapExpense, mapLeave, mapPrincipal, mapShift, mapTask } from "@/lib/field-ops-map";
+import type {
+  ExpenseClaim,
+  FieldOpsMutation,
+  FieldTask,
+  FieldUser,
+  LeaveRequest,
+  OfflineItem,
+  Shift,
+} from "@/lib/types";
 
-/**
- * Field operations tables do not exist on camartes-backend today.
- * These paths are the contract the backend team needs to add.
- *
- * Required tables:
- *   field_ops_tasks, field_ops_shifts, field_ops_leave_requests,
- *   field_ops_expenses, field_ops_location_pings
- *
- * Required endpoints (all auth-gated):
- *   GET  /api/field-ops/health
- *   GET  /api/field-ops/snapshot
- *   POST /api/field-ops/tasks
- *   PATCH /api/field-ops/tasks/{id}
- *   POST /api/field-ops/tasks/{id}/assign
- *   POST /api/field-ops/shifts/clock-in
- *   POST /api/field-ops/shifts/clock-out
- *   POST /api/field-ops/leave
- *   POST /api/field-ops/leave/{id}/review
- *   POST /api/field-ops/expenses
- *   POST /api/field-ops/expenses/{id}/review
- */
 export const FIELD_OPS_HEALTH = "/api/field-ops/health";
 
 export type FieldOpsSyncResult =
-  | { ok: true }
+  | { ok: true; status: number; body?: unknown }
   | { ok: false; status: number; error: string; retryable: boolean };
 
+export type FieldOpsSnapshot = {
+  principal: FieldUser | null;
+  tasks: FieldTask[];
+  shifts: Shift[];
+  leave_requests: LeaveRequest[];
+  expenses: ExpenseClaim[];
+  scoped_team: FieldUser[];
+};
+
 let cachedAvailability: { at: number; available: boolean; reason: string } | null = null;
+
+export function clearFieldOpsProbeCache() {
+  cachedAvailability = null;
+}
+
+function apiRoot() {
+  return fieldOpsApiBaseUrl() || FIELD_OPS_API;
+}
+
+export function fieldOpsConfigured(): boolean {
+  return !!apiRoot();
+}
+
+function retryableStatus(status: number) {
+  return status === 0 || status === 408 || status === 429 || status >= 500;
+}
+
+function detailFromBody(payload: unknown, fallback: string) {
+  if (payload && typeof payload === "object" && "detail" in payload) {
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  return fallback;
+}
+
+async function readJson(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 export async function probeFieldOps(): Promise<{ available: boolean; reason: string }> {
   if (cachedAvailability && Date.now() - cachedAvailability.at < 30_000) {
     return cachedAvailability;
   }
+  const root = apiRoot();
+  if (!root) {
+    const result = {
+      at: Date.now(),
+      available: false,
+      reason: "Field Operations API URL is not configured (set EXPO_PUBLIC_FIELD_OPS_API).",
+    };
+    cachedAvailability = result;
+    return result;
+  }
   try {
-    const res = await fetch(`${CAMARTES_API}${FIELD_OPS_HEALTH}`);
+    const res = await fetch(`${root}${FIELD_OPS_HEALTH}`);
     const available = res.ok;
     const result = {
       at: Date.now(),
       available,
-      reason: available ? "ok" : `Field ops API returned ${res.status}`,
+      reason: available ? "ok" : `Field Operations health returned ${res.status}`,
     };
     cachedAvailability = result;
     return result;
   } catch {
-    const result = { at: Date.now(), available: false, reason: "Field ops API unreachable" };
+    const result = { at: Date.now(), available: false, reason: "Field Operations API unreachable" };
     cachedAvailability = result;
     return result;
   }
@@ -74,6 +113,84 @@ function pathFor(op: FieldOpsMutation): string {
   }
 }
 
+export async function fieldOpsRequest(
+  path: string,
+  init: RequestInit & { token?: string | null },
+): Promise<{ ok: true; status: number; body: unknown } | FieldOpsSyncResult> {
+  const root = apiRoot();
+  if (!root) {
+    return {
+      ok: false,
+      status: 0,
+      error: "Field Operations API URL is not configured.",
+      retryable: false,
+    };
+  }
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string> | undefined),
+  };
+  if (init.token) headers.Authorization = `Bearer ${init.token}`;
+  try {
+    const res = await fetch(`${root}${path}`, { ...init, headers });
+    const body = await readJson(res);
+    if (res.ok) return { ok: true, status: res.status, body };
+    return {
+      ok: false,
+      status: res.status,
+      error: detailFromBody(body, `Field Operations ${res.status}`),
+      retryable: retryableStatus(res.status),
+    };
+  } catch {
+    return { ok: false, status: 0, error: "Network error contacting Field Operations.", retryable: true };
+  }
+}
+
+export async function fetchFieldOpsMe(token: string) {
+  return fieldOpsRequest("/api/auth/me", { method: "GET", token });
+}
+
+export async function fetchFieldOpsSnapshot(token: string) {
+  return fieldOpsRequest("/api/field-ops/snapshot", { method: "GET", token });
+}
+
+export async function fetchFieldOpsTeam(token: string) {
+  return fieldOpsRequest("/api/field-ops/team", { method: "GET", token });
+}
+
+export function parseSnapshot(body: unknown, previous?: {
+  tasks: FieldTask[];
+  shifts: Shift[];
+}): FieldOpsSnapshot {
+  const root = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const prevTasks = new Map((previous?.tasks ?? []).map((row) => [row.id, row]));
+  const prevShifts = new Map((previous?.shifts ?? []).map((row) => [row.id, row]));
+  const teamRaw = Array.isArray(root.scoped_team) ? root.scoped_team : [];
+  return {
+    principal: mapPrincipal(root.principal),
+    tasks: Array.isArray(root.tasks)
+      ? root.tasks.map((row) => {
+          const id = row && typeof row === "object" && "id" in row ? String((row as { id?: unknown }).id ?? "") : "";
+          return mapTask(row, prevTasks.get(id));
+        })
+      : [],
+    shifts: Array.isArray(root.shifts)
+      ? root.shifts.map((row) => {
+          const id = row && typeof row === "object" && "id" in row ? String((row as { id?: unknown }).id ?? "") : "";
+          return mapShift(row, prevShifts.get(id));
+        })
+      : [],
+    leave_requests: Array.isArray(root.leave_requests) ? root.leave_requests.map(mapLeave) : [],
+    expenses: Array.isArray(root.expenses) ? root.expenses.map(mapExpense) : [],
+    scoped_team: teamRaw.map(mapPrincipal).filter((row): row is FieldUser => !!row),
+  };
+}
+
+export function parseTeam(body: unknown): FieldUser[] {
+  const root = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const rows = Array.isArray(root.team) ? root.team : [];
+  return rows.map(mapPrincipal).filter((row): row is FieldUser => !!row);
+}
+
 export async function pushFieldOpsMutation(
   item: OfflineItem,
   token: string | null,
@@ -83,34 +200,18 @@ export async function pushFieldOpsMutation(
   }
   const probe = await probeFieldOps();
   if (!probe.available) {
-    return { ok: false, status: 404, error: probe.reason, retryable: false };
+    return { ok: false, status: 0, error: probe.reason, retryable: true };
   }
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "Idempotency-Key": item.idempotencyKey,
-    };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(`${CAMARTES_API}${pathFor(item.op)}`, {
-      method: item.op.type === "set_task_status" ? "PATCH" : "POST",
-      headers,
-      body: JSON.stringify(item.op.payload),
-    });
-    if (res.ok) return { ok: true };
-    let detail = `Field ops ${res.status}`;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-    } catch {
-      /* ignore */
-    }
-    return {
-      ok: false,
-      status: res.status,
-      error: detail,
-      retryable: res.status >= 500 || res.status === 404 || res.status === 408 || res.status === 429,
-    };
-  } catch {
-    return { ok: false, status: 0, error: "Network error while syncing field ops.", retryable: true };
-  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Idempotency-Key": item.idempotencyKey,
+  };
+  const result = await fieldOpsRequest(pathFor(item.op), {
+    method: item.op.type === "set_task_status" ? "PATCH" : "POST",
+    headers,
+    body: JSON.stringify(item.op.payload),
+    token,
+  });
+  if (result.ok) return { ok: true, status: result.status, body: result.body };
+  return result;
 }

@@ -39,10 +39,9 @@ import { colors } from "@/constants/theme";
 import { MiniMap } from "@/components/mini-map";
 import { KIND_LABEL } from "@/components/task-badges";
 import { useApp } from "@/lib/app-context";
-import { USERS } from "@/lib/seed";
 import { slaState } from "@/lib/field-ops";
 import { presenceLabel } from "@/lib/team-presence";
-import type { AppState, CreateTaskInput, FieldTask, TaskKind, TaskPriority, TaskStatus, TeamMate, Vendor } from "@/lib/types";
+import type { AppState, CreateTaskInput, FieldTask, FieldUser, TaskKind, TaskPriority, TaskStatus, TeamMate, Vendor } from "@/lib/types";
 
 type Section = "overview" | "team" | "tasks" | "vendors" | "approvals";
 type TaskFilter = "all" | "unassigned" | "assigned" | "in_progress" | "awaiting_photo" | "blocked" | "completed";
@@ -56,6 +55,7 @@ const NAV_ITEMS: { id: Section; label: string }[] = [
 ];
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
+  unassigned: "Unassigned",
   assigned: "Assigned",
   in_progress: "In progress",
   awaiting_photo: "Needs proof",
@@ -68,7 +68,7 @@ function escapeCsv(value: string | number | undefined) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
-function exportTasks(tasks: FieldTask[]) {
+function exportTasks(tasks: FieldTask[], people: FieldUser[]) {
   const header = [
     "Task",
     "Booking",
@@ -87,7 +87,7 @@ function exportTasks(tasks: FieldTask[]) {
     task.customerName,
     task.customerPlace.area,
     STATUS_LABEL[task.status],
-    USERS.find((member) => member.id === task.assigneeId)?.name ?? "Unassigned",
+    people.find((member) => member.id === task.assigneeId)?.name ?? "Unassigned",
     task.scheduledFor,
     task.slaMinutes,
   ]);
@@ -138,8 +138,8 @@ function percentWidth(value: number): `${number}%` {
   return `${Math.max(0, Math.min(100, value))}%`;
 }
 
-function employeeName(userId?: string) {
-  return USERS.find((person) => person.id === userId)?.name ?? "Unknown employee";
+function employeeName(people: FieldUser[], userId?: string) {
+  return people.find((person) => person.id === userId)?.name ?? "Unknown employee";
 }
 
 export default function AdminScreen() {
@@ -158,6 +158,7 @@ export default function AdminScreen() {
     cityManager,
     createTask,
     team,
+    directory,
     fieldOpsAvailable,
     fieldOpsReason,
     logout,
@@ -252,8 +253,8 @@ export default function AdminScreen() {
           <View style={styles.syncBanner}>
             <Text style={styles.syncBannerText}>
               {fieldOpsAvailable
-                ? "Camartes field-ops API is connected."
-                : `Hub cache on this device${fieldOpsReason ? ` · ${fieldOpsReason}` : ""}. Multi-device sync needs the field-ops endpoints listed in lib/field-ops-api.ts.`}
+                ? "Connected to the dedicated Field Operations backend."
+                : `Not connected to Field Operations${fieldOpsReason ? ` · ${fieldOpsReason}` : ""}. Showing this device cache only — not live hub data.`}
             </Text>
           </View>
           {section === "overview" ? (
@@ -267,7 +268,7 @@ export default function AdminScreen() {
               vendorCount={onboarding.length}
               followUpCount={onboarding.filter((vendor) => vendor.status === "follow_up").length}
               lastUpdatedAt={state.audit[0]?.at}
-              onExport={() => exportTasks(state.tasks)}
+              onExport={() => exportTasks(state.tasks, directory)}
               onViewTasks={() => setSection("tasks")}
               onViewTeam={() => setSection("team")}
               onTaskPress={setSelectedTaskId}
@@ -293,6 +294,7 @@ export default function AdminScreen() {
             <ApprovalsPanel
               phone={phone}
               state={state}
+              people={directory}
               onReviewLeave={reviewLeave}
               onReviewExpense={reviewExpense}
             />
@@ -303,6 +305,7 @@ export default function AdminScreen() {
         visible={creating}
         phone={phone}
         vendors={state.vendors}
+        executives={team}
         onClose={() => setCreating(false)}
         onCreate={(input) => {
           const error = createTask(input);
@@ -972,11 +975,13 @@ function VendorsPanel({ phone, vendors }: { phone: boolean; vendors: Vendor[] })
 function ApprovalsPanel({
   phone,
   state,
+  people,
   onReviewLeave,
   onReviewExpense,
 }: {
   phone: boolean;
   state: AppState;
+  people: FieldUser[];
   onReviewLeave: (id: string, status: "approved" | "rejected") => void;
   onReviewExpense: (id: string, status: "approved" | "rejected") => void;
 }) {
@@ -1002,7 +1007,7 @@ function ApprovalsPanel({
             <View key={leave.id} style={[styles.approvalRow, index > 0 && styles.rowBorder]}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>
-                  {employeeName(leave.userId)} · {leave.type[0].toUpperCase() + leave.type.slice(1)} leave · {leave.days} day
+                  {employeeName(people, leave.userId)} · {leave.type[0].toUpperCase() + leave.type.slice(1)} leave · {leave.days} day
                   {leave.days === 1 ? "" : "s"}
                 </Text>
                 <Text style={styles.rowMeta}>
@@ -1028,7 +1033,7 @@ function ApprovalsPanel({
           {expenses.map((expense, index) => (
             <View key={expense.id} style={[styles.approvalRow, index > 0 && styles.rowBorder]}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{employeeName(expense.userId)} · ₹{expense.amountInr} · {expense.km} km</Text>
+                <Text style={styles.rowTitle}>{employeeName(people, expense.userId)} · ₹{expense.amountInr} · {expense.km} km</Text>
                 <Text style={styles.rowMeta}>
                   {format(parseISO(expense.date), "d MMM")} · {expense.note}
                 </Text>
@@ -1336,7 +1341,7 @@ function TaskRow({
   onPress: () => void;
   team: TeamMate[];
 }) {
-  const assignee = team.find((member) => member.id === task.assigneeId) ?? USERS.find((person) => person.id === task.assigneeId);
+  const assignee = team.find((member) => member.id === task.assigneeId);
   const sla = task.status === "completed" ? null : slaState(task);
   return (
     <Pressable
@@ -1388,16 +1393,17 @@ function CreateTaskModal({
   visible,
   phone,
   vendors,
+  executives,
   onClose,
   onCreate,
 }: {
   visible: boolean;
   phone: boolean;
   vendors: Vendor[];
+  executives: TeamMate[];
   onClose: () => void;
   onCreate: (input: CreateTaskInput) => string | null;
 }) {
-  const executives = USERS.filter((person) => person.role === "field_executive");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<TaskKind>("delivery");

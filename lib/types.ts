@@ -6,6 +6,7 @@ export type TaskKind =
   | "vendor_visit";
 
 export type TaskStatus =
+  | "unassigned"
   | "assigned"
   | "in_progress"
   | "awaiting_photo"
@@ -15,7 +16,7 @@ export type TaskStatus =
 export type TaskPriority = "low" | "normal" | "high" | "urgent";
 
 export type UserRole = "field_executive" | "operations_manager";
-export type AuthSource = "demo" | "camartes";
+export type AuthSource = "demo" | "field_ops";
 export type OfflineStatus = "pending" | "success" | "failed";
 
 export type LeaveType = "casual" | "sick" | "earned" | "unpaid";

@@ -50,8 +50,8 @@ export default function LoginScreen() {
           <View style={styles.demoBanner}>
             <Text style={styles.demoTitle}>Development demo mode</Text>
             <Text style={styles.demoCopy}>
-              Demo accounts are available only while this build is in development. Production uses Camartes login and
-              never stores passwords on the device.
+              Demo accounts are available only while this build is in development. Production uses the dedicated Field
+              Operations backend and never stores passwords on the device.
             </Text>
           </View>
         ) : null}
@@ -106,7 +106,7 @@ export default function LoginScreen() {
               </ChipWrap>
             </>
           ) : (
-            <Muted>Sign in with your Camartes work account. Field executives and operations managers use the same form.</Muted>
+            <Muted>Sign in with your Field Operations work account. Field executives and operations managers use the same form.</Muted>
           )}
         </Card>
         <Pressable

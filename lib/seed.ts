@@ -679,6 +679,23 @@ export function createInitialState(): AppState {
   };
 }
 
+/** Catalog/notices shell with no demo operational records. Used for dedicated backend sessions. */
+export function createEmptyOpsState(): AppState {
+  const base = createInitialState();
+  return {
+    ...base,
+    tasks: [],
+    shifts: [],
+    leaves: [],
+    expenses: [],
+    pings: [],
+    damages: [],
+    audit: [],
+    offlineQueue: [],
+    vendorVisits: [],
+  };
+}
+
 export const TEAM: TeamMate[] = [
   {
     id: "fe-rahul",

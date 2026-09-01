@@ -1,4 +1,5 @@
-import { CAMARTES_API } from "@/lib/camartes-api";
+import { fieldOpsApiBaseUrl } from "@/lib/field-ops-config";
+import { mapPrincipal } from "@/lib/field-ops-map";
 import type { AuthSession, FieldUser, UserRole } from "@/lib/types";
 
 type JsonRecord = Record<string, unknown>;
@@ -14,40 +15,26 @@ function pickString(...values: unknown[]): string {
   return "";
 }
 
-function initialsFrom(name: string) {
-  const parts = name.split(/\s+/).filter(Boolean);
-  return (parts[0]?.[0] ?? "C") + (parts[1]?.[0] ?? "");
+function exactRole(payload: JsonRecord): UserRole | null {
+  const nested = asRecord(payload.user) ?? asRecord(payload.principal) ?? payload;
+  const raw = pickString(nested.role, payload.role);
+  if (raw === "operations_manager" || raw === "field_executive") return raw;
+  return null;
 }
 
-function roleFromPayload(payload: JsonRecord, fallback: UserRole): UserRole {
-  const nested = asRecord(payload.user) ?? payload;
-  const raw = pickString(nested.role, nested.user_role, payload.role, payload.user_role).toLowerCase();
-  if (payload.is_admin === true || nested.is_admin === true) return "operations_manager";
-  if (/admin|operation|manager|dispatch|hrms/.test(raw)) return "operations_manager";
-  if (/field|executive|employee/.test(raw)) return "field_executive";
-  return fallback;
-}
-
-export function mapCamartesProfile(payload: unknown, fallbackRole: UserRole): FieldUser | null {
+export function mapFieldOpsProfile(payload: unknown): FieldUser | null {
   const root = asRecord(payload);
   if (!root) return null;
-  const nested = asRecord(root.user) ?? asRecord(root.data) ?? root;
-  const email = pickString(nested.email, root.email);
-  const id = pickString(nested.id, nested.user_id, nested.employee_id, root.id, email);
-  const name = pickString(nested.name, nested.full_name, nested.display_name, email.split("@")[0]);
-  if (!id && !email) return null;
-  return {
-    id: id || email,
-    name: name || email || "Camartes employee",
-    email: email || `${id}@camartes.com`,
-    phone: pickString(nested.phone, nested.mobile, nested.contact_number),
-    employeeId: pickString(nested.employee_id, nested.employeeId, nested.emp_id) || id || "CM-FE",
-    role: roleFromPayload(root, fallbackRole),
-    hub: pickString(nested.hub, nested.city, nested.location) || "Hyderabad",
-    avatarInitials: initialsFrom(name || email || "CM").toUpperCase(),
-    employment: "Camartes employee",
-    source: "camartes",
-  };
+  const nested = asRecord(root.user) ?? asRecord(root.principal) ?? asRecord(root.data) ?? root;
+  const mapped = mapPrincipal({
+    ...nested,
+    role: exactRole(root) ?? nested.role,
+    displayName: pickString(nested.name, nested.display_name, nested.full_name, nested.displayName),
+    emailOrPhone: pickString(nested.email, nested.emailOrPhone, root.email),
+    employeeId: pickString(nested.employee_id, nested.employeeId, nested.emp_id),
+    id: pickString(nested.id, nested.user_id, root.id),
+  });
+  return mapped;
 }
 
 function tokenFromPayload(payload: unknown): string | null {
@@ -57,69 +44,88 @@ function tokenFromPayload(payload: unknown): string | null {
   return pickString(root.access_token, root.token, root.accessToken, nested.access_token, nested.token) || null;
 }
 
-async function postLogin(path: string, body: JsonRecord): Promise<{ status: number; payload: unknown }> {
-  const res = await fetch(`${CAMARTES_API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  let payload: unknown = null;
+async function parseResponse(res: Response): Promise<unknown> {
   try {
-    payload = await res.json();
+    return await res.json();
   } catch {
-    payload = null;
+    return null;
   }
-  return { status: res.status, payload };
 }
 
-export async function loginCamartes(email: string, password: string): Promise<
-  { ok: true; session: AuthSession } | { ok: false; error: string }
+function apiRoot() {
+  return fieldOpsApiBaseUrl();
+}
+
+export async function loginFieldOps(email: string, password: string): Promise<
+  { ok: true; session: AuthSession } | { ok: false; error: string; status?: number }
 > {
   const trimmed = email.trim();
   if (!trimmed || !password) return { ok: false, error: "Email and password are required." };
+  const root = apiRoot();
+  if (!root) {
+    return { ok: false, error: "Field Operations API URL is not configured." };
+  }
 
   try {
-    const appLogin = await postLogin("/api/auth/login", { email_or_phone: trimmed, password });
-    if (appLogin.status >= 200 && appLogin.status < 300) {
-      const user = mapCamartesProfile(appLogin.payload, "field_executive");
-      if (!user) {
-        return { ok: false, error: "Camartes login succeeded but the profile is missing required fields." };
-      }
-      return { ok: true, session: { user, token: tokenFromPayload(appLogin.payload) } };
+    const res = await fetch(`${root}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email_or_phone: trimmed, password }),
+    });
+    const payload = await parseResponse(res);
+    if (res.status === 401) return { ok: false, error: "Email or password is incorrect.", status: 401 };
+    if (res.status === 403) {
+      const detail =
+        payload && typeof payload === "object" && "detail" in payload && typeof payload.detail === "string"
+          ? payload.detail
+          : "This account is not authorized for Field Operations.";
+      return { ok: false, error: detail, status: 403 };
     }
-
-    const adminLogin = await postLogin("/api/admin/auth/login", { email: trimmed, password });
-    if (adminLogin.status >= 200 && adminLogin.status < 300) {
-      const user = mapCamartesProfile(adminLogin.payload, "operations_manager");
-      if (!user) {
-        return { ok: false, error: "Camartes admin login succeeded but the profile is missing required fields." };
-      }
-      return {
-        ok: true,
-        session: {
-          user: { ...user, role: "operations_manager" },
-          token: tokenFromPayload(adminLogin.payload),
-        },
-      };
+    if (res.status < 200 || res.status >= 300) {
+      return { ok: false, error: `Field Operations login failed (${res.status}).`, status: res.status };
     }
-
-    if (appLogin.status === 401 || adminLogin.status === 401) {
-      return { ok: false, error: "Email or password is incorrect." };
+    const user = mapFieldOpsProfile(payload);
+    const token = tokenFromPayload(payload);
+    if (!user || !token) {
+      return { ok: false, error: "Login succeeded but the Field Operations profile is incomplete." };
     }
-    return { ok: false, error: `Camartes login failed (${appLogin.status}).` };
+    return { ok: true, session: { user, token } };
   } catch {
-    return { ok: false, error: "Cannot reach Camartes login right now." };
+    return { ok: false, error: "Cannot reach the Field Operations backend right now." };
   }
 }
 
-export async function logoutCamartes(token: string | null) {
-  if (!token) return;
+export async function restoreFieldOpsSession(token: string): Promise<
+  { ok: true; user: FieldUser } | { ok: false; status: number; error: string }
+> {
+  const root = apiRoot();
+  if (!root) return { ok: false, status: 0, error: "Field Operations API URL is not configured." };
   try {
-    await fetch(`${CAMARTES_API}/api/auth/logout`, {
+    const res = await fetch(`${root}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await parseResponse(res);
+    if (res.status === 401) return { ok: false, status: 401, error: "Session expired." };
+    if (res.status === 403) return { ok: false, status: 403, error: "Not authorized for Field Operations." };
+    if (!res.ok) return { ok: false, status: res.status, error: `Session lookup failed (${res.status}).` };
+    const user = mapFieldOpsProfile(payload);
+    if (!user) return { ok: false, status: 422, error: "Session profile is incomplete." };
+    return { ok: true, user };
+  } catch {
+    return { ok: false, status: 0, error: "Cannot reach the Field Operations backend right now." };
+  }
+}
+
+export async function logoutFieldOps(token: string | null) {
+  if (!token) return;
+  const root = apiRoot();
+  if (!root) return;
+  try {
+    await fetch(`${root}/api/auth/logout`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
   } catch {
-    /* session is cleared locally regardless */
+    /* local session is cleared regardless */
   }
 }
