@@ -29,7 +29,7 @@ export default function TasksScreen() {
   const list = useMemo(() => {
     return state.tasks
       .filter((t) => {
-        if (t.assigneeId && t.assigneeId !== user?.id) return false;
+        if (t.assigneeId !== user?.id) return false;
         const open = t.status !== "completed";
         if (tab === "open" && !open) return false;
         if (tab === "done" && open) return false;

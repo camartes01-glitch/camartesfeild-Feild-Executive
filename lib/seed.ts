@@ -77,39 +77,53 @@ export const USERS: FieldUser[] = [
     id: "fe-rahul",
     name: "Rahul Sharma",
     email: "rahul@camartes.com",
-    password: "field2026",
     phone: "+91 90000 44121",
     employeeId: "CM-FE-104",
-    role: "Field Executive",
+    role: "field_executive",
     hub: "Hyderabad",
     avatarInitials: "RS",
     employment: "Camartes employee",
+    source: "demo",
   },
   {
     id: "fe-priya",
     name: "Priya Nair",
     email: "priya@camartes.com",
-    password: "field2026",
     phone: "+91 90000 44122",
     employeeId: "CM-FE-109",
-    role: "Field Executive",
+    role: "field_executive",
     hub: "Hyderabad",
     avatarInitials: "PN",
     employment: "Camartes employee",
+    source: "demo",
   },
   {
     id: "fe-arjun",
     name: "Arjun Reddy",
     email: "arjun@camartes.com",
-    password: "field2026",
     phone: "+91 90000 44123",
     employeeId: "CM-FE-112",
-    role: "Field Executive",
+    role: "field_executive",
     hub: "Hyderabad",
     avatarInitials: "AR",
     employment: "Camartes employee",
+    source: "demo",
+  },
+  {
+    id: "op-meera",
+    name: "Meera Iyer",
+    email: "ops@camartes.com",
+    phone: "+91 90000 44101",
+    employeeId: "CM-OP-201",
+    role: "operations_manager",
+    hub: "Hyderabad",
+    avatarInitials: "MI",
+    employment: "Camartes employee",
+    source: "demo",
   },
 ];
+
+export const FIELD_USERS = USERS.filter((user) => user.role === "field_executive");
 
 function event(id: string, at: string, label: string) {
   return { id, at, label };
@@ -458,11 +472,12 @@ function iso(d: Date) {
   return d.toISOString();
 }
 
-function shift(date: string, inH: number, inM: number, outH: number, outM: number): Shift {
+function shift(date: string, inH: number, inM: number, outH: number, outM: number, userId = "fe-rahul"): Shift {
   const clockIn = new Date(`${date}T${String(inH).padStart(2, "0")}:${String(inM).padStart(2, "0")}:00+05:30`);
   const clockOut = new Date(`${date}T${String(outH).padStart(2, "0")}:${String(outM).padStart(2, "0")}:00+05:30`);
   return {
-    id: `sh-${date}`,
+    id: `sh-${userId}-${date}`,
+    userId,
     date,
     clockIn: iso(clockIn),
     clockOut: iso(clockOut),
@@ -494,6 +509,7 @@ const SHIFTS: Shift[] = [
 const LEAVES: LeaveRequest[] = [
   {
     id: "LV-201",
+    userId: "fe-rahul",
     type: "casual",
     from: "2026-08-28",
     to: "2026-08-28",
@@ -501,9 +517,11 @@ const LEAVES: LeaveRequest[] = [
     reason: "Family function in Warangal. Back on 29th.",
     status: "pending",
     submittedAt: "2026-08-22T11:20:00+05:30",
+    createdAt: "2026-08-22T11:20:00+05:30",
   },
   {
     id: "LV-188",
+    userId: "fe-priya",
     type: "earned",
     from: "2026-09-10",
     to: "2026-09-11",
@@ -511,9 +529,13 @@ const LEAVES: LeaveRequest[] = [
     reason: "Onam travel.",
     status: "approved",
     submittedAt: "2026-08-08T09:40:00+05:30",
+    createdAt: "2026-08-08T09:40:00+05:30",
+    reviewedAt: "2026-08-09T09:00:00+05:30",
+    reviewedBy: "op-meera",
   },
   {
     id: "LV-160",
+    userId: "fe-arjun",
     type: "sick",
     from: "2026-08-01",
     to: "2026-08-01",
@@ -521,6 +543,9 @@ const LEAVES: LeaveRequest[] = [
     reason: "Fever.",
     status: "approved",
     submittedAt: "2026-08-01T07:15:00+05:30",
+    createdAt: "2026-08-01T07:15:00+05:30",
+    reviewedAt: "2026-08-01T08:00:00+05:30",
+    reviewedBy: "op-meera",
   },
 ];
 
@@ -535,7 +560,7 @@ export function createInitialState(): AppState {
   }));
   const shifts = structuredClone(SHIFTS).map((row) => ({
     ...row,
-    id: `sh-${rebaseDemoDate(row.date, today)}`,
+    id: `sh-${row.userId}-${rebaseDemoDate(row.date, today)}`,
     date: rebaseDemoDate(row.date, today),
     clockIn: rebaseDemoDate(row.clockIn, today),
     clockOut: row.clockOut ? rebaseDemoDate(row.clockOut, today) : undefined,
@@ -545,6 +570,8 @@ export function createInitialState(): AppState {
     from: rebaseDemoDate(row.from, today),
     to: rebaseDemoDate(row.to, today),
     submittedAt: rebaseDemoDate(row.submittedAt, today),
+    createdAt: rebaseDemoDate(row.createdAt ?? row.submittedAt, today),
+    reviewedAt: row.reviewedAt ? rebaseDemoDate(row.reviewedAt, today) : undefined,
   }));
   const vendors = structuredClone(VENDORS).map((vendor) => ({
     ...vendor,
@@ -565,19 +592,25 @@ export function createInitialState(): AppState {
     expenses: [
       {
         id: "EX-02",
-        date: "2026-08-27",
+        userId: "fe-rahul",
+        date: rebaseDemoDate("2026-08-27", today),
         km: 12.8,
         amountInr: 180,
         note: "Fuel · HITEC City vendor beat",
         status: "submitted",
+        createdAt: rebaseDemoDate("2026-08-27T18:20:00+05:30", today),
       },
       {
         id: "EX-01",
+        userId: "fe-priya",
         date: rebaseDemoDate("2026-08-25", today),
         km: 18.4,
         amountInr: 220,
         note: "Auto Banjara → Kondapur delivery",
         status: "approved",
+        createdAt: rebaseDemoDate("2026-08-25T19:10:00+05:30", today),
+        reviewedAt: rebaseDemoDate("2026-08-26T09:00:00+05:30", today),
+        reviewedBy: "op-meera",
       },
     ],
     audit: [{ id: "a0", at: rebaseDemoDate("2026-08-26T07:00:00+05:30", today), label: "Hyderabad hub roster published" }],
@@ -654,6 +687,7 @@ export const TEAM: TeamMate[] = [
     status: "on_task",
     area: "Banjara Hills",
     geo: BANJARA.geo,
+    presence: "directory",
   },
   {
     id: "fe-priya",
@@ -662,6 +696,7 @@ export const TEAM: TeamMate[] = [
     status: "on_shift",
     area: "HITEC City",
     geo: HITEC.geo,
+    presence: "directory",
   },
   {
     id: "fe-arjun",
@@ -670,6 +705,7 @@ export const TEAM: TeamMate[] = [
     status: "on_task",
     area: "Madhapur",
     geo: { lat: 17.4486, lng: 78.3908 },
+    presence: "directory",
   },
 ];
 

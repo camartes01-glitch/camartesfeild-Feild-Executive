@@ -12,12 +12,12 @@ import { SHIFT_START_KM, activityMinutes, evaluateShiftClockIn, istYmd } from "@
 import { t } from "@/lib/i18n";
 
 export default function AttendanceScreen() {
-  const { state, live, clockIn, clockOut, requestOt, openShift, locationMode, setLocationMode } = useApp();
+  const { state, live, clockIn, clockOut, requestOt, openShift, locationMode, setLocationMode, myShifts, user } = useApp();
   const lang = state.language;
   const [reason, setReason] = useState("");
   const [helmet, setHelmet] = useState(false);
   const [twoWheeler, setTwoWheeler] = useState(false);
-  const stats = monthStats(state.shifts);
+  const stats = monthStats(myShifts);
   const otMinutes = stats.shifts.reduce((acc, s) => {
     const extra = Math.max(0, shiftMinutes(s) - 8 * 60);
     return acc + extra;
@@ -30,7 +30,7 @@ export default function AttendanceScreen() {
     : null;
   const gate = evaluateShiftClockIn({
     geo: live,
-    tasks: state.tasks,
+    tasks: state.tasks.filter((task) => task.assigneeId === user?.id),
     roster: ROSTER,
     overrideReason: reason.trim() || undefined,
   });

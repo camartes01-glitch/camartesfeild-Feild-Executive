@@ -13,8 +13,9 @@ const LANGS: { id: Lang; label: string }[] = [
 ];
 
 export default function MoreScreen() {
-  const { user, state, online, logout, resetDemo, setLanguage, triggerSos, cityManager } = useApp();
+  const { user, state, online, logout, resetDemo, setLanguage, triggerSos, cityManager, isDemoMode, fieldOpsAvailable, fieldOpsReason } = useApp();
   const lang = state.language;
+  const roleLabel = user?.role === "operations_manager" ? "Operations manager" : "Field executive";
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -27,7 +28,7 @@ export default function MoreScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.name}>{user?.name}</Text>
             <Muted>
-              {user?.role} · {user?.employeeId}
+              {roleLabel} · {user?.employeeId}
             </Muted>
             <Text style={styles.emp}>{user?.employment}</Text>
           </View>
@@ -67,18 +68,24 @@ export default function MoreScreen() {
       <Card>
         <Text style={styles.h}>Offline queue</Text>
         <Muted>
-          {online
-            ? "Pending records stay on this device until a Camartes sync endpoint confirms upload."
-            : "Offline — new field records will remain queued on this device."}
+          {fieldOpsAvailable
+            ? "Field ops API is reachable — pending records will upload."
+            : fieldOpsReason
+              ? `Sync waiting: ${fieldOpsReason}`
+              : online
+                ? "Pending records stay on this device until a Camartes field-ops endpoint confirms upload."
+                : "Offline — new field records will remain queued on this device."}
         </Muted>
         {state.offlineQueue.length === 0 ? <Muted>No offline records are waiting.</Muted> : null}
         {state.offlineQueue.slice(0, 8).map((q) => (
           <Muted key={q.id}>
-            {q.synced ? "Uploaded" : "Pending upload"} · {q.label}
+            {q.status === "success" ? "Uploaded" : q.status === "failed" ? "Failed" : "Pending upload"}
+            {q.retries ? ` · retry ${q.retries}` : ""} · {q.label}
+            {q.lastError ? ` · ${q.lastError}` : ""}
           </Muted>
         ))}
       </Card>
-      <Button label={t(lang, "resetDemo")} variant="ghost" onPress={resetDemo} />
+      {isDemoMode ? <Button label={t(lang, "resetDemo")} variant="ghost" onPress={resetDemo} /> : null}
       <Button
         label={t(lang, "signOut")}
         variant="ghost"

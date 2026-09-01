@@ -11,7 +11,7 @@ import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { formatKm, pathKm } from "@/lib/geo";
 import { formatDuration, formatWhen, monthStats, shiftMinutes } from "@/lib/hours";
-import { LOCATION_PRESETS, ROSTER, TEAM } from "@/lib/seed";
+import { LOCATION_PRESETS, ROSTER } from "@/lib/seed";
 import { t } from "@/lib/i18n";
 import {
   SHIFT_START_KM,
@@ -37,21 +37,23 @@ export default function HomeScreen() {
     gpsMessage,
     refreshGps,
     cityManager,
+    myShifts,
+    team,
   } = useApp();
   const lang = state.language;
   const today = istYmd();
   const tomorrow = addYmd(today, 1);
   const openAll = [...state.tasks]
-    .filter((t) => t.status !== "completed" && (!t.assigneeId || t.assigneeId === user?.id))
+    .filter((t) => t.status !== "completed" && t.assigneeId === user?.id)
     .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
   const todayStops = openAll.filter((t) => t.scheduledFor.slice(0, 10) === today);
   const beat = todayStops.length ? todayStops : openAll.filter((t) => t.scheduledFor.slice(0, 10) !== tomorrow);
   const tomorrowTasks = openAll.filter((t) => t.scheduledFor.slice(0, 10) === tomorrow);
   const next = beat[0];
   const tomorrowRoster = ROSTER.find((r) => r.date === tomorrow);
-  const stats = monthStats(state.shifts);
+  const stats = monthStats(myShifts);
   const you = live ?? { lat: 17.4126, lng: 78.4483 };
-  const todayKm = pathKm(state.pings.filter((p) => format(parseISO(p.at), "yyyy-MM-dd") === today));
+  const todayKm = pathKm(state.pings.filter((p) => p.userId === user?.id && format(parseISO(p.at), "yyyy-MM-dd") === today));
   const [helmet, setHelmet] = useState(false);
   const [twoWheeler, setTwoWheeler] = useState(false);
   const unread = state.notices.filter((n) => !n.read).length;
@@ -60,7 +62,7 @@ export default function HomeScreen() {
   const [showMap, setShowMap] = useState(false);
   const gate = evaluateShiftClockIn({
     geo: live,
-    tasks: state.tasks,
+    tasks: state.tasks.filter((task) => task.assigneeId === user?.id),
     roster: ROSTER,
   });
 
@@ -204,12 +206,14 @@ export default function HomeScreen() {
             height={140}
             markers={[
               { id: "you", label: "You", color: colors.primary, point: you },
-              ...TEAM.filter((m) => m.id !== user?.id).map((m) => ({
-                id: m.id,
-                label: m.name.split(" ")[0],
-                color: colors.orange,
-                point: m.geo,
-              })),
+              ...team
+                .filter((m) => m.id !== user?.id && m.presence !== "directory")
+                .map((m) => ({
+                  id: m.id,
+                  label: m.name.split(" ")[0],
+                  color: colors.orange,
+                  point: m.geo,
+                })),
             ]}
           />
         ) : null}

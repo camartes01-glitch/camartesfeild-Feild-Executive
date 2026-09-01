@@ -10,7 +10,9 @@ export default function AppTabs() {
   const lang = state.language;
 
   useEffect(() => {
-    if (ready && !user) router.replace("/");
+    if (!ready) return;
+    if (!user) router.replace("/");
+    else if (user.role === "operations_manager") router.replace("/admin");
   }, [ready, user]);
 
   if (!ready || !user) return null;

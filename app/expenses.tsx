@@ -6,7 +6,7 @@ import { useApp } from "@/lib/app-context";
 import { format } from "date-fns";
 
 export default function ExpensesScreen() {
-  const { state, addExpense } = useApp();
+  const { myExpenses, addExpense } = useApp();
   const [note, setNote] = useState("");
   const [km, setKm] = useState("");
   const [amt, setAmt] = useState("");
@@ -36,7 +36,7 @@ export default function ExpensesScreen() {
           }}
         />
       </Card>
-      {state.expenses.map((e) => (
+      {myExpenses.map((e) => (
         <Card key={e.id}>
           <View style={styles.row}>
             <Text style={styles.title}>{e.note}</Text>

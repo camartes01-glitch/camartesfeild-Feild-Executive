@@ -10,7 +10,7 @@ import type { LeavePolicy } from "@/lib/types";
 const TYPES: Array<keyof LeavePolicy> = ["casual", "sick", "earned"];
 
 export default function LeaveScreen() {
-  const { state, requestLeave } = useApp();
+  const { state, requestLeave, myLeaves } = useApp();
   const lang = state.language;
   const [type, setType] = useState<keyof LeavePolicy>("casual");
   const [from, setFrom] = useState("");
@@ -18,7 +18,7 @@ export default function LeaveScreen() {
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");
 
-  const remaining = (lt: keyof LeavePolicy) => state.leavePolicy[lt] - leaveUsedByType(state.leaves, lt);
+  const remaining = (lt: keyof LeavePolicy) => state.leavePolicy[lt] - leaveUsedByType(myLeaves, lt);
 
   const submit = () => {
     setErr("");
@@ -65,10 +65,10 @@ export default function LeaveScreen() {
         {err ? <Text style={styles.err}>{err}</Text> : null}
         <Button label="Submit to HR" onPress={submit} />
       </Card>
-      {state.leaves.length === 0 ? (
+      {myLeaves.length === 0 ? (
         <Muted>No leave filed this year.</Muted>
       ) : (
-        state.leaves.map((l) => (
+        myLeaves.map((l) => (
           <Card key={l.id}>
             <Text style={styles.body}>
               {l.type} · {l.days}d · {l.status}

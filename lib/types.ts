@@ -12,6 +12,12 @@ export type TaskStatus =
   | "completed"
   | "blocked";
 
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
+
+export type UserRole = "field_executive" | "operations_manager";
+export type AuthSource = "demo" | "camartes";
+export type OfflineStatus = "pending" | "success" | "failed";
+
 export type LeaveType = "casual" | "sick" | "earned" | "unpaid";
 export type LeaveStatus = "pending" | "approved" | "rejected";
 
@@ -59,6 +65,7 @@ export type TaskEvent = {
 
 export type LeaveRequest = {
   id: string;
+  userId: string;
   type: LeaveType;
   from: string;
   to: string;
@@ -66,6 +73,9 @@ export type LeaveRequest = {
   reason: string;
   status: LeaveStatus;
   submittedAt: string;
+  createdAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
 };
 
 export type PingActivity = "hub" | "travel" | "customer" | "vendor" | "unknown";
@@ -77,6 +87,7 @@ export type LocationPing = {
   accuracyM: number;
   source: "gps" | "simulated";
   activity?: PingActivity;
+  userId?: string;
 };
 
 export type AttemptCode =
@@ -141,6 +152,9 @@ export type FieldTask = {
   whatsappSent?: boolean;
   customerRating?: number;
   slaMinutes?: number;
+  priority?: TaskPriority;
+  createdBy?: string;
+  createdAt?: string;
   vendorId?: string;
   vendorOutcome?: VendorVisitOutcome;
   beatSeq?: number;
@@ -257,11 +271,15 @@ export type DamageReport = {
 
 export type ExpenseClaim = {
   id: string;
+  userId: string;
   date: string;
   km: number;
   amountInr: number;
   note: string;
   status: "draft" | "submitted" | "approved" | "rejected";
+  createdAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
 };
 
 export type AuditEvent = {
@@ -275,8 +293,37 @@ export type OfflineItem = {
   at: string;
   label: string;
   synced: boolean;
+  status: OfflineStatus;
   retries?: number;
   lastRetryAt?: string;
+  lastError?: string;
+  idempotencyKey: string;
+  op?: FieldOpsMutation;
+};
+
+export type FieldOpsMutation =
+  | { type: "create_task"; payload: FieldTask }
+  | { type: "assign_task"; payload: { taskId: string; assigneeId: string; assignedAt: string } }
+  | { type: "set_task_status"; payload: { taskId: string; status: TaskStatus; label: string } }
+  | { type: "clock_in"; payload: Shift }
+  | { type: "clock_out"; payload: { shiftId: string; clockOut: string } }
+  | { type: "request_leave"; payload: LeaveRequest }
+  | { type: "review_leave"; payload: { id: string; status: LeaveStatus; reviewedAt: string; reviewedBy: string } }
+  | { type: "add_expense"; payload: ExpenseClaim }
+  | { type: "review_expense"; payload: { id: string; status: "approved" | "rejected"; reviewedAt: string; reviewedBy: string } };
+
+export type CreateTaskInput = {
+  title: string;
+  description: string;
+  kind: TaskKind;
+  customerName: string;
+  customerPhone?: string;
+  area: string;
+  address?: string;
+  vendorId?: string;
+  priority: TaskPriority;
+  dueAt: string;
+  assigneeId?: string;
 };
 
 export type AppNotice = {
@@ -301,10 +348,13 @@ export type TeamMate = {
   status: "on_shift" | "off_shift" | "on_task";
   area: string;
   geo: GeoPoint;
+  presence: "live_gps" | "last_seen" | "directory";
+  lastSeenAt?: string;
 };
 
 export type Shift = {
   id: string;
+  userId: string;
   date: string;
   clockIn: string;
   clockOut?: string;
@@ -328,13 +378,18 @@ export type FieldUser = {
   id: string;
   name: string;
   email: string;
-  password: string;
   phone: string;
   employeeId: string;
-  role: "Field Executive";
+  role: UserRole;
   hub: string;
   avatarInitials: string;
   employment: "Camartes employee";
+  source: AuthSource;
+};
+
+export type AuthSession = {
+  user: FieldUser;
+  token: string | null;
 };
 
 export type Lang = "en" | "hi" | "te";

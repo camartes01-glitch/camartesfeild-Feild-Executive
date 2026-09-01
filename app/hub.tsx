@@ -6,7 +6,7 @@ import { SlaBadge } from "@/components/task-badges";
 import { colors } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
 import { slaState } from "@/lib/field-ops";
-import { TEAM } from "@/lib/seed";
+import { presenceLabel } from "@/lib/team-presence";
 
 const STATUS: Record<string, string> = {
   on_shift: "On shift",
@@ -15,22 +15,27 @@ const STATUS: Record<string, string> = {
 };
 
 export default function HubScreen() {
-  const { user, live, state } = useApp();
-  const you = live ?? TEAM.find((m) => m.id === user?.id)?.geo ?? TEAM[0].geo;
-  const slaRed = state.tasks.filter((t) => t.status !== "completed" && slaState(t).tone === "late");
+  const { user, live, state, team } = useApp();
+  const you = live ?? team.find((m) => m.id === user?.id)?.geo ?? { lat: 17.4126, lng: 78.4483 };
+  const slaRed = state.tasks.filter((t) => t.assigneeId === user?.id && t.status !== "completed" && slaState(t).tone === "late");
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Muted>City manager view — live field executives and SLA-red jobs on the Hyderabad hub.</Muted>
+      <Muted>
+        Hub roster for your assigned work. Other executives appear on the map only when this device has a last-seen ping
+        or live GPS — directory pins are not live tracking.
+      </Muted>
       <MiniMap
         markers={[
           { id: "you", label: "You", color: colors.primary, point: you },
-          ...TEAM.filter((m) => m.id !== user?.id).map((m) => ({
-            id: m.id,
-            label: m.name.split(" ")[0],
-            color: colors.orange,
-            point: m.geo,
-          })),
+          ...team
+            .filter((m) => m.id !== user?.id && m.presence !== "directory")
+            .map((m) => ({
+              id: m.id,
+              label: m.name.split(" ")[0],
+              color: colors.orange,
+              point: m.geo,
+            })),
           ...slaRed.map((t) => ({
             id: t.id,
             label: t.id.replace("TSK-", ""),
@@ -54,7 +59,7 @@ export default function HubScreen() {
           </Pressable>
         ))}
       </Card>
-      {TEAM.map((m) => (
+      {team.map((m) => (
         <Card key={m.id}>
           <View style={styles.row}>
             <View style={styles.avatar}>
@@ -63,10 +68,10 @@ export default function HubScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>
                 {m.name}
-                {m.id === user?.id ? " · you (live GPS)" : ""}
+                {m.id === user?.id ? " · you" : ""}
               </Text>
               <Muted>
-                {m.employeeId} · {STATUS[m.status]} · {m.area}
+                {m.employeeId} · {STATUS[m.status]} · {presenceLabel(m)}
               </Muted>
             </View>
           </View>
@@ -78,6 +83,8 @@ export default function HubScreen() {
 
 const styles = StyleSheet.create({
   wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 40 },
+  h: { fontWeight: "800", color: colors.ink, fontSize: 16 },
+  name: { fontWeight: "800", color: colors.ink },
   row: { flexDirection: "row", gap: 12, alignItems: "center" },
   avatar: {
     width: 44,
@@ -88,6 +95,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   avTxt: { color: "#fff", fontWeight: "800" },
-  name: { fontWeight: "800", color: colors.ink, fontSize: 16 },
-  h: { fontSize: 16, fontWeight: "800", color: colors.ink },
 });

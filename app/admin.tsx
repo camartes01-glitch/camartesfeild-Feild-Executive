@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Linking,
@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   MapPin,
   Navigation,
+  Plus,
   Search,
   Settings,
   Store,
@@ -38,12 +39,13 @@ import { colors } from "@/constants/theme";
 import { MiniMap } from "@/components/mini-map";
 import { KIND_LABEL } from "@/components/task-badges";
 import { useApp } from "@/lib/app-context";
-import { TEAM } from "@/lib/seed";
+import { USERS } from "@/lib/seed";
 import { slaState } from "@/lib/field-ops";
-import type { AppState, FieldTask, TaskStatus, Vendor } from "@/lib/types";
+import { presenceLabel } from "@/lib/team-presence";
+import type { AppState, CreateTaskInput, FieldTask, TaskKind, TaskPriority, TaskStatus, TeamMate, Vendor } from "@/lib/types";
 
 type Section = "overview" | "team" | "tasks" | "vendors" | "approvals";
-type TaskFilter = "all" | "assigned" | "in_progress" | "awaiting_photo" | "blocked" | "completed";
+type TaskFilter = "all" | "unassigned" | "assigned" | "in_progress" | "awaiting_photo" | "blocked" | "completed";
 
 const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -85,7 +87,7 @@ function exportTasks(tasks: FieldTask[]) {
     task.customerName,
     task.customerPlace.area,
     STATUS_LABEL[task.status],
-    TEAM.find((member) => member.id === task.assigneeId)?.name ?? "Unassigned",
+    USERS.find((member) => member.id === task.assigneeId)?.name ?? "Unassigned",
     task.scheduledFor,
     task.slaMinutes,
   ]);
@@ -136,11 +138,17 @@ function percentWidth(value: number): `${number}%` {
   return `${Math.max(0, Math.min(100, value))}%`;
 }
 
+function employeeName(userId?: string) {
+  return USERS.find((person) => person.id === userId)?.name ?? "Unknown employee";
+}
+
 export default function AdminScreen() {
   const { width } = useWindowDimensions();
   const compact = width < 920;
   const phone = width < 620;
   const {
+    ready,
+    user,
     state,
     online,
     assignTask,
@@ -148,12 +156,24 @@ export default function AdminScreen() {
     reviewLeave,
     reviewExpense,
     cityManager,
+    createTask,
+    team,
+    fieldOpsAvailable,
+    fieldOpsReason,
+    logout,
   } = useApp();
   const [section, setSection] = useState<Section>("overview");
   const [query, setQuery] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!user) router.replace("/");
+    else if (user.role !== "operations_manager") router.replace("/(app)");
+  }, [ready, user]);
 
   const openTasks = state.tasks.filter((task) => task.status !== "completed");
   const completedTasks = state.tasks.filter((task) => task.status === "completed");
@@ -167,14 +187,21 @@ export default function AdminScreen() {
   const alertCount =
     urgentTasks.length +
     state.notices.filter((notice) => !notice.read).length +
-    state.offlineQueue.filter((item) => !item.synced).length +
+    state.offlineQueue.filter((item) => item.status !== "success").length +
     state.damages.length;
   const selectedTask = state.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const filteredTasks = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return state.tasks
       .filter((task) => {
-        const statusMatch = taskFilter === "all" || task.status === taskFilter;
+        const statusMatch =
+          taskFilter === "all"
+            ? true
+            : taskFilter === "unassigned"
+              ? !task.assigneeId
+              : taskFilter === "assigned"
+                ? !!task.assigneeId && task.status === "assigned"
+                : task.status === taskFilter;
         const queryMatch =
           !needle ||
           [task.id, task.bookingRef, task.customerName, task.customerPlace.area, task.title]
@@ -189,6 +216,8 @@ export default function AdminScreen() {
         return priority(a) - priority(b) || a.scheduledFor.localeCompare(b.scheduledFor);
       });
   }, [query, state.tasks, taskFilter]);
+
+  if (!ready || !user || user.role !== "operations_manager") return null;
 
   return (
     <View style={styles.app}>
@@ -210,13 +239,23 @@ export default function AdminScreen() {
           alertCount={alertCount}
           onChange={setSection}
           onOpenAlerts={() => setAlertsOpen(true)}
-          onClose={() => router.replace("/")}
+          onClose={() => {
+            logout();
+            router.replace("/");
+          }}
         />
 
         <ScrollView
           contentContainerStyle={[styles.content, phone && styles.contentPhone]}
           showsVerticalScrollIndicator={false}
         >
+          <View style={styles.syncBanner}>
+            <Text style={styles.syncBannerText}>
+              {fieldOpsAvailable
+                ? "Camartes field-ops API is connected."
+                : `Hub cache on this device${fieldOpsReason ? ` · ${fieldOpsReason}` : ""}. Multi-device sync needs the field-ops endpoints listed in lib/field-ops-api.ts.`}
+            </Text>
+          </View>
           {section === "overview" ? (
             <Overview
               compact={compact}
@@ -232,6 +271,7 @@ export default function AdminScreen() {
               onViewTasks={() => setSection("tasks")}
               onViewTeam={() => setSection("team")}
               onTaskPress={setSelectedTaskId}
+              team={team}
             />
           ) : section === "tasks" ? (
             <TasksPanel
@@ -242,9 +282,11 @@ export default function AdminScreen() {
               onFilter={setTaskFilter}
               tasks={filteredTasks}
               onTaskPress={setSelectedTaskId}
+              onCreate={() => setCreating(true)}
+              team={team}
             />
           ) : section === "team" ? (
-            <TeamPanel phone={phone} tasks={state.tasks} />
+            <TeamPanel phone={phone} tasks={state.tasks} team={team} shifts={state.shifts} />
           ) : section === "vendors" ? (
             <VendorsPanel phone={phone} vendors={onboarding} />
           ) : (
@@ -257,9 +299,21 @@ export default function AdminScreen() {
           )}
         </ScrollView>
       </View>
+      <CreateTaskModal
+        visible={creating}
+        phone={phone}
+        vendors={state.vendors}
+        onClose={() => setCreating(false)}
+        onCreate={(input) => {
+          const error = createTask(input);
+          if (!error) setCreating(false);
+          return error;
+        }}
+      />
       <TaskActionModal
         task={selectedTask}
         phone={phone}
+        team={team}
         onClose={() => setSelectedTaskId(null)}
         onAssign={(assigneeId) => {
           if (selectedTask) assignTask(selectedTask.id, assigneeId);
@@ -489,6 +543,7 @@ function Overview({
   onViewTasks,
   onViewTeam,
   onTaskPress,
+  team,
 }: {
   compact: boolean;
   phone: boolean;
@@ -503,6 +558,7 @@ function Overview({
   onViewTasks: () => void;
   onViewTeam: () => void;
   onTaskPress: (id: string) => void;
+  team: TeamMate[];
 }) {
   const performance = operationalMetrics(tasks);
   const priorityTasks = [...openTasks].sort((a, b) => {
@@ -519,8 +575,8 @@ function Overview({
       <View style={[styles.pageHeading, phone && { alignItems: "flex-start" }]}>
         <View>
           <Text style={styles.eyebrow}>FIELD OPERATIONS</Text>
-          <Text style={styles.pageTitle}>{greeting}, Ananya</Text>
-          <Text style={styles.pageSubtitle}>Live dispatch, SLA, and workforce status across Hyderabad.</Text>
+          <Text style={styles.pageTitle}>{greeting}, operations</Text>
+          <Text style={styles.pageSubtitle}>Dispatch, SLA, and workforce status across Hyderabad.</Text>
         </View>
         <View style={[styles.headingActions, phone && { width: "100%" }]}>
           <View style={[styles.dateButton, phone && { flex: 1 }]}>
@@ -544,8 +600,8 @@ function Overview({
           icon={<Users size={20} color="#2563EB" />}
           iconBg="#EFF6FF"
           label="Team on field"
-          value={`${TEAM.filter((member) => member.status !== "off_shift").length}/${TEAM.length}`}
-          detail="Coverage across 2 hubs"
+          value={`${team.filter((member) => member.status !== "off_shift").length}/${team.length}`}
+          detail="On shift or on task right now"
           tone="green"
         />
         <MetricCard
@@ -583,19 +639,21 @@ function Overview({
             </View>
             <View style={styles.liveBadge}>
               <View style={styles.liveDot} />
-              <Text style={styles.liveText}>LIVE</Text>
+              <Text style={styles.liveText}>STATUS</Text>
             </View>
           </View>
           <View style={styles.mapFrame}>
             <MiniMap
               height={compact ? 250 : 315}
               markers={[
-                ...TEAM.map((member) => ({
-                  id: member.id,
-                  label: member.name.split(" ")[0],
-                  color: member.status === "on_task" ? colors.primary : "#2563EB",
-                  point: member.geo,
-                })),
+                ...team
+                  .filter((member) => member.presence !== "directory")
+                  .map((member) => ({
+                    id: member.id,
+                    label: member.name.split(" ")[0],
+                    color: member.status === "on_task" ? colors.primary : "#2563EB",
+                    point: member.geo,
+                  })),
                 ...openTasks
                   .filter((task) => slaState(task).tone === "late" || task.status === "blocked")
                   .map((task) => ({
@@ -627,14 +685,14 @@ function Overview({
           <View style={styles.panelHeader}>
             <View>
               <Text style={styles.panelTitle}>Field team</Text>
-              <Text style={styles.panelSubtitle}>{TEAM.filter((member) => member.status !== "off_shift").length} members active</Text>
+              <Text style={styles.panelSubtitle}>{team.filter((member) => member.status !== "off_shift").length} members active</Text>
             </View>
             <Pressable onPress={onViewTeam}>
               <Text style={styles.linkText}>View all</Text>
             </Pressable>
           </View>
           <View>
-            {TEAM.map((member, index) => (
+            {team.map((member, index) => (
               <View key={member.id} style={[styles.teamRow, index > 0 && styles.rowBorder]}>
                 <View style={[styles.avatar, { backgroundColor: avatarColor(index) }]}>
                   <Text style={styles.avatarText}>
@@ -648,12 +706,12 @@ function Overview({
                   <Text style={styles.rowTitle}>{member.name}</Text>
                   <View style={styles.inlineMeta}>
                     <MapPin size={12} color="#94A3B8" />
-                    <Text style={styles.rowMeta}>{member.area}</Text>
+                    <Text style={styles.rowMeta}>{presenceLabel(member)}</Text>
                   </View>
                 </View>
                 <StatusPill
-                  label={member.status === "on_task" ? "On task" : "Available"}
-                  tone={member.status === "on_task" ? "orange" : "green"}
+                  label={member.status === "on_task" ? "On task" : member.status === "on_shift" ? "On shift" : "Off shift"}
+                  tone={member.status === "on_task" ? "orange" : member.status === "on_shift" ? "green" : "red"}
                 />
               </View>
             ))}
@@ -677,7 +735,7 @@ function Overview({
             </Pressable>
           </View>
           {priorityTasks.slice(0, 4).map((task, index) => (
-            <TaskRow key={task.id} task={task} bordered={index > 0} phone={phone} onPress={() => onTaskPress(task.id)} />
+            <TaskRow key={task.id} task={task} bordered={index > 0} phone={phone} onPress={() => onTaskPress(task.id)} team={team} />
           ))}
         </Panel>
 
@@ -713,6 +771,8 @@ function TasksPanel({
   onFilter,
   tasks,
   onTaskPress,
+  onCreate,
+  team,
 }: {
   phone: boolean;
   query: string;
@@ -721,9 +781,12 @@ function TasksPanel({
   onFilter: (filter: TaskFilter) => void;
   tasks: FieldTask[];
   onTaskPress: (id: string) => void;
+  onCreate: () => void;
+  team: TeamMate[];
 }) {
   const filters: { id: TaskFilter; label: string }[] = [
     { id: "all", label: "All tasks" },
+    { id: "unassigned", label: "Unassigned" },
     { id: "assigned", label: "Assigned" },
     { id: "in_progress", label: "In progress" },
     { id: "awaiting_photo", label: "Needs proof" },
@@ -735,7 +798,7 @@ function TasksPanel({
       <SectionHeading
         eyebrow="DISPATCH"
         title="Task board"
-        subtitle="Monitor field work, SLAs, and proof status across the city."
+        subtitle="Create, assign, and monitor field work across the city."
       />
       <Panel>
         <View style={[styles.taskTools, phone && styles.stack]}>
@@ -749,6 +812,10 @@ function TasksPanel({
               style={styles.searchInput}
             />
           </View>
+          <Pressable onPress={onCreate} style={styles.exportButton}>
+            <Plus size={16} color="#FFFFFF" />
+            <Text style={styles.exportButtonText}>New task</Text>
+          </Pressable>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.filterRow}>
               {filters.map((item) => (
@@ -778,6 +845,7 @@ function TasksPanel({
             bordered={index > 0}
             phone={phone}
             onPress={() => onTaskPress(task.id)}
+            team={team}
           />
         ))}
         {tasks.length === 0 ? (
@@ -792,22 +860,33 @@ function TasksPanel({
   );
 }
 
-function TeamPanel({ phone, tasks }: { phone: boolean; tasks: FieldTask[] }) {
+function TeamPanel({
+  phone,
+  tasks,
+  team,
+  shifts,
+}: {
+  phone: boolean;
+  tasks: FieldTask[];
+  team: TeamMate[];
+  shifts: AppState["shifts"];
+}) {
   return (
     <>
       <SectionHeading
         eyebrow="PEOPLE"
         title="Field team"
-        subtitle="Live availability and workload for Hyderabad field executives."
+        subtitle="Shift status, last seen, and workload. Directory pins are not live GPS."
       />
       <View style={[styles.directoryGrid, phone && styles.stack]}>
-        {TEAM.map((member, index) => {
+        {team.map((member, index) => {
           const assigned = tasks.filter(
             (task) => task.assigneeId === member.id && task.status !== "completed",
           ).length;
           const completed = tasks.filter(
             (task) => task.assigneeId === member.id && task.status === "completed",
           ).length;
+          const openShift = shifts.find((shift) => shift.userId === member.id && !shift.clockOut);
           return (
             <Panel key={member.id} style={{ flex: 1 }}>
               <View style={styles.personHead}>
@@ -820,16 +899,21 @@ function TeamPanel({ phone, tasks }: { phone: boolean; tasks: FieldTask[] }) {
                   </Text>
                 </View>
                 <StatusPill
-                  label={member.status === "on_task" ? "On task" : "Available"}
-                  tone={member.status === "on_task" ? "orange" : "green"}
+                  label={member.status === "on_task" ? "On task" : member.status === "on_shift" ? "On shift" : "Off shift"}
+                  tone={member.status === "on_task" ? "orange" : member.status === "on_shift" ? "green" : "red"}
                 />
               </View>
               <Text style={styles.personName}>{member.name}</Text>
               <Text style={styles.personId}>{member.employeeId}</Text>
               <View style={styles.personLocation}>
                 <MapPin size={15} color={colors.primaryDark} />
-                <Text style={styles.personLocationText}>{member.area}</Text>
+                <Text style={styles.personLocationText}>{presenceLabel(member)}</Text>
               </View>
+              <Text style={styles.rowMeta}>
+                {openShift
+                  ? `Clocked in ${format(parseISO(openShift.clockIn), "h:mm a")}`
+                  : "No open shift on this device cache"}
+              </Text>
               <View style={styles.personStats}>
                 <View>
                   <Text style={styles.personStatValue}>{assigned}</Text>
@@ -918,7 +1002,7 @@ function ApprovalsPanel({
             <View key={leave.id} style={[styles.approvalRow, index > 0 && styles.rowBorder]}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>
-                  {leave.type[0].toUpperCase() + leave.type.slice(1)} leave · {leave.days} day
+                  {employeeName(leave.userId)} · {leave.type[0].toUpperCase() + leave.type.slice(1)} leave · {leave.days} day
                   {leave.days === 1 ? "" : "s"}
                 </Text>
                 <Text style={styles.rowMeta}>
@@ -944,7 +1028,7 @@ function ApprovalsPanel({
           {expenses.map((expense, index) => (
             <View key={expense.id} style={[styles.approvalRow, index > 0 && styles.rowBorder]}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>₹{expense.amountInr} · {expense.km} km</Text>
+                <Text style={styles.rowTitle}>{employeeName(expense.userId)} · ₹{expense.amountInr} · {expense.km} km</Text>
                 <Text style={styles.rowMeta}>
                   {format(parseISO(expense.date), "d MMM")} · {expense.note}
                 </Text>
@@ -994,12 +1078,14 @@ function EmptyApproval({ label }: { label: string }) {
 function TaskActionModal({
   task,
   phone,
+  team,
   onClose,
   onAssign,
   onStatus,
 }: {
   task: FieldTask | null;
   phone: boolean;
+  team: TeamMate[];
   onClose: () => void;
   onAssign: (assigneeId: string) => void;
   onStatus: (status: TaskStatus) => void;
@@ -1042,7 +1128,7 @@ function TaskActionModal({
             <View>
               <Text style={styles.modalSectionLabel}>ASSIGNEE</Text>
               <View style={styles.choiceWrap}>
-                {TEAM.map((member) => (
+                {team.map((member, index) => (
                   <Pressable
                     key={member.id}
                     accessibilityRole="button"
@@ -1050,7 +1136,7 @@ function TaskActionModal({
                     onPress={() => onAssign(member.id)}
                     style={[styles.choice, task.assigneeId === member.id && styles.choiceActive]}
                   >
-                    <View style={[styles.choiceAvatar, { backgroundColor: avatarColor(TEAM.indexOf(member)) }]}>
+                    <View style={[styles.choiceAvatar, { backgroundColor: avatarColor(index) }]}>
                       <Text style={styles.choiceAvatarText}>
                         {member.name.split(" ").map((part) => part[0]).join("")}
                       </Text>
@@ -1242,13 +1328,15 @@ function TaskRow({
   bordered,
   phone,
   onPress,
+  team,
 }: {
   task: FieldTask;
   bordered: boolean;
   phone: boolean;
   onPress: () => void;
+  team: TeamMate[];
 }) {
-  const assignee = TEAM.find((member) => member.id === task.assigneeId);
+  const assignee = team.find((member) => member.id === task.assigneeId) ?? USERS.find((person) => person.id === task.assigneeId);
   const sla = task.status === "completed" ? null : slaState(task);
   return (
     <Pressable
@@ -1293,6 +1381,128 @@ function TaskRow({
         />
       </View>
     </Pressable>
+  );
+}
+
+function CreateTaskModal({
+  visible,
+  phone,
+  vendors,
+  onClose,
+  onCreate,
+}: {
+  visible: boolean;
+  phone: boolean;
+  vendors: Vendor[];
+  onClose: () => void;
+  onCreate: (input: CreateTaskInput) => string | null;
+}) {
+  const executives = USERS.filter((person) => person.role === "field_executive");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<TaskKind>("delivery");
+  const [customerName, setCustomerName] = useState("");
+  const [area, setArea] = useState("Hyderabad");
+  const [vendorId, setVendorId] = useState("");
+  const [priority, setPriority] = useState<TaskPriority>("normal");
+  const [dueAt, setDueAt] = useState(() => new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 16));
+  const [assigneeId, setAssigneeId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  if (!visible) return null;
+  const kinds: TaskKind[] = ["delivery", "return", "address_verification", "inventory", "vendor_visit"];
+  const priorities: TaskPriority[] = ["low", "normal", "high", "urgent"];
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={[styles.modalCard, phone && styles.modalCardPhone]}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>NEW DISPATCH</Text>
+              <Text style={styles.modalTitle}>Create task</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.iconButton} accessibilityRole="button" accessibilityLabel="Close">
+              <X size={18} color="#475569" />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <TextInput value={title} onChangeText={setTitle} placeholder="Task title" placeholderTextColor="#94A3B8" style={styles.createInput} />
+            <TextInput
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Description / notes"
+              placeholderTextColor="#94A3B8"
+              style={[styles.createInput, { minHeight: 72 }]}
+              multiline
+            />
+            <TextInput value={customerName} onChangeText={setCustomerName} placeholder="Customer name" placeholderTextColor="#94A3B8" style={styles.createInput} />
+            <TextInput value={area} onChangeText={setArea} placeholder="Area / location" placeholderTextColor="#94A3B8" style={styles.createInput} />
+            <TextInput value={dueAt} onChangeText={setDueAt} placeholder="Due (YYYY-MM-DDTHH:mm)" placeholderTextColor="#94A3B8" style={styles.createInput} />
+            <Text style={styles.modalSectionLabel}>TYPE</Text>
+            <View style={styles.filterRow}>
+              {kinds.map((item) => (
+                <Pressable key={item} onPress={() => setKind(item)} style={[styles.filterButton, kind === item && styles.filterButtonActive]}>
+                  <Text style={[styles.filterText, kind === item && styles.filterTextActive]}>{item.replaceAll("_", " ")}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.modalSectionLabel}>PRIORITY</Text>
+            <View style={styles.filterRow}>
+              {priorities.map((item) => (
+                <Pressable key={item} onPress={() => setPriority(item)} style={[styles.filterButton, priority === item && styles.filterButtonActive]}>
+                  <Text style={[styles.filterText, priority === item && styles.filterTextActive]}>{item}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.modalSectionLabel}>VENDOR (OPTIONAL)</Text>
+            <ScrollView horizontal>
+              <View style={styles.filterRow}>
+                <Pressable onPress={() => setVendorId("")} style={[styles.filterButton, !vendorId && styles.filterButtonActive]}>
+                  <Text style={[styles.filterText, !vendorId && styles.filterTextActive]}>None</Text>
+                </Pressable>
+                {vendors.filter((vendor) => vendor.onboarding).slice(0, 8).map((vendor) => (
+                  <Pressable key={vendor.id} onPress={() => setVendorId(vendor.id)} style={[styles.filterButton, vendorId === vendor.id && styles.filterButtonActive]}>
+                    <Text style={[styles.filterText, vendorId === vendor.id && styles.filterTextActive]}>{vendor.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+            <Text style={styles.modalSectionLabel}>ASSIGN TO</Text>
+            <View style={styles.choiceWrap}>
+              <Pressable onPress={() => setAssigneeId("")} style={[styles.choice, !assigneeId && styles.choiceActive]}>
+                <Text style={[styles.choiceText, !assigneeId && styles.choiceTextActive]}>Unassigned</Text>
+              </Pressable>
+              {executives.map((person) => (
+                <Pressable key={person.id} onPress={() => setAssigneeId(person.id)} style={[styles.choice, assigneeId === person.id && styles.choiceActive]}>
+                  <Text style={[styles.choiceText, assigneeId === person.id && styles.choiceTextActive]}>{person.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {error ? <Text style={styles.slaLate}>{error}</Text> : null}
+            <Pressable
+              onPress={() => {
+                const due = dueAt.length === 16 ? `${dueAt}:00+05:30` : dueAt;
+                const msg = onCreate({
+                  title,
+                  description,
+                  kind,
+                  customerName,
+                  area,
+                  vendorId: vendorId || undefined,
+                  priority,
+                  dueAt: due,
+                  assigneeId: assigneeId || undefined,
+                });
+                setError(msg);
+              }}
+              style={styles.exportButton}
+            >
+              <Plus size={16} color="#FFFFFF" />
+              <Text style={styles.exportButtonText}>Create task</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1346,6 +1556,26 @@ function avatarColor(index: number) {
 }
 
 const styles = StyleSheet.create({
+  syncBanner: {
+    backgroundColor: "#FFF7ED",
+    borderWidth: 1,
+    borderColor: "#FED7AA",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  syncBannerText: { color: "#9A3412", fontSize: 12, fontWeight: "600", lineHeight: 18 },
+  createInput: {
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#0F172A",
+    fontSize: 14,
+    backgroundColor: "#FFFFFF",
+  },
   app: { flex: 1, flexDirection: "row", backgroundColor: "#F8FAFC" },
   sidebar: {
     width: 248,

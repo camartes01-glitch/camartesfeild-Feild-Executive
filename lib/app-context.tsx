@@ -11,8 +11,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import * as Location from "expo-location";
 import { format } from "date-fns";
-import { BANJARA, HITEC, createInitialState, LOCATION_PRESETS, ROSTER, USERS } from "@/lib/seed";
+import { BANJARA, createInitialState, LOCATION_PRESETS, ROSTER, USERS } from "@/lib/seed";
 import { fetchCamartesVendors, overlayVendorState } from "@/lib/camartes-api";
+import { loginCamartes, logoutCamartes } from "@/lib/camartes-auth";
+import { isDemoMode, matchDemoPassword } from "@/lib/demo-mode";
+import { probeFieldOps, pushFieldOpsMutation } from "@/lib/field-ops-api";
+import { buildTeamPresence } from "@/lib/team-presence";
 import { primaryService } from "@/lib/camartes-services";
 import { generateHandoverPin } from "@/lib/otp";
 import { nearestCityManager } from "@/lib/cities";
@@ -28,10 +32,14 @@ import type {
   FieldUser,
   GeoPhoto,
   KitCondition,
+  AuthSession,
+  CreateTaskInput,
+  FieldOpsMutation,
   Lang,
   LeaveRequest,
   LeaveType,
   LocationPing,
+  OfflineItem,
   Shift,
   TaskStatus,
   Vendor,
@@ -42,7 +50,8 @@ import type {
   VendorVisitOutcome,
 } from "@/lib/types";
 
-const KEY = "camartes-field-v10";
+const KEY = "camartes-field-v11";
+const SESSION_KEY = "camartes-field-session-v1";
 const HANDOVER_PIN_TTL_MS = 15 * 60 * 1000;
 
 export type LocationMode = "gps" | string;
@@ -64,8 +73,20 @@ type AppContextValue = {
   locationMode: LocationMode;
   setLocationMode: (mode: LocationMode) => void;
   setLanguage: (lang: Lang) => void;
-  login: (email: string, password: string) => string | null;
+  login: (email: string, password: string) => Promise<string | null>;
   logout: () => void;
+  isDemoMode: boolean;
+  isOperations: boolean;
+  authSource: AuthSession["user"]["source"] | null;
+  fieldOpsAvailable: boolean | null;
+  fieldOpsReason: string | null;
+  createTask: (input: CreateTaskInput) => string | null;
+  team: ReturnType<typeof buildTeamPresence>;
+  myTasks: FieldTask[];
+  myLeaves: LeaveRequest[];
+  myExpenses: ExpenseClaim[];
+  myShifts: Shift[];
+  flushQueue: () => Promise<void>;
   clockIn: (opts?: {
     selfieUri?: string;
     overrideReason?: string;
@@ -88,7 +109,7 @@ type AppContextValue = {
   matchSerial: (taskId: string, serial: string) => boolean;
   sendWhatsApp: (taskId: string, kind: "eta" | "delivered" | "collected") => void;
   addDamage: (report: Omit<DamageReport, "id" | "at">) => void;
-  addExpense: (claim: Omit<ExpenseClaim, "id" | "status">) => void;
+  addExpense: (claim: { date: string; km: number; amountInr: number; note: string }) => void;
   markTraining: (id: string) => void;
   markNoticesRead: () => void;
   gpsMessage: string | null;
@@ -139,6 +160,21 @@ type AppContextValue = {
 
 const Ctx = createContext<AppContextValue | null>(null);
 
+function migrateOffline(items: OfflineItem[] | Array<Partial<OfflineItem>> | undefined): OfflineItem[] {
+  return (items ?? []).map((item, index) => ({
+    id: item.id ?? `q-${index}`,
+    at: item.at ?? new Date().toISOString(),
+    label: item.label ?? "Queued change",
+    synced: !!item.synced,
+    status: item.status ?? (item.synced ? "success" : "pending"),
+    retries: item.retries ?? 0,
+    lastRetryAt: item.lastRetryAt,
+    lastError: item.lastError,
+    idempotencyKey: item.idempotencyKey ?? item.id ?? `legacy-${index}`,
+    op: item.op,
+  }));
+}
+
 function mergeState(parsed: Partial<AppState>): AppState {
   const base = createInitialState();
   const incoming = parsed.tasks ?? [];
@@ -164,6 +200,21 @@ function mergeState(parsed: Partial<AppState>): AppState {
     ...base,
     ...parsed,
     tasks,
+    shifts: (parsed.shifts ?? base.shifts).map((shift) => ({
+      ...shift,
+      userId: shift.userId || "fe-rahul",
+    })),
+    leaves: (parsed.leaves ?? base.leaves).map((leave) => ({
+      ...leave,
+      userId: leave.userId || "fe-rahul",
+      createdAt: leave.createdAt || leave.submittedAt,
+    })),
+    expenses: (parsed.expenses ?? base.expenses).map((expense) => ({
+      ...expense,
+      userId: expense.userId || "fe-rahul",
+      createdAt: expense.createdAt || `${expense.date}T12:00:00+05:30`,
+    })),
+    offlineQueue: migrateOffline(parsed.offlineQueue ?? base.offlineQueue),
     vendors: overlayVendorState(base.vendors, parsed.vendors ?? []),
     vendorVisits: parsed.vendorVisits ?? base.vendorVisits,
   };
@@ -195,6 +246,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [live, setLive] = useState<LiveFix | null>(null);
   const [gpsMessage, setGpsMessage] = useState<string | null>(null);
   const [gpsTick, setGpsTick] = useState(0);
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [fieldOpsAvailable, setFieldOpsAvailable] = useState<boolean | null>(null);
+  const [fieldOpsReason, setFieldOpsReason] = useState<string | null>(null);
   const [vendorsSync, setVendorsSync] = useState<{
     loading: boolean;
     live: boolean | null;
@@ -205,8 +259,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(KEY);
+        const [raw, sessionRaw] = await Promise.all([
+          AsyncStorage.getItem(KEY),
+          AsyncStorage.getItem(SESSION_KEY),
+        ]);
         if (raw) setState(mergeState(JSON.parse(raw) as Partial<AppState>));
+        if (sessionRaw) {
+          const parsed = JSON.parse(sessionRaw) as AuthSession;
+          if (parsed?.user?.id && parsed.user.role) setSession(parsed);
+        }
       } catch {
         /* seed */
       } finally {
@@ -224,6 +285,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, 300);
     return () => clearTimeout(timer);
   }, [state, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!session) {
+      void AsyncStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    void AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session)).catch(() => {
+      /* ignore */
+    });
+  }, [session, ready]);
 
   const refreshVendors = useCallback(async () => {
     setVendorsSync((s) => ({ ...s, loading: true, error: null }));
@@ -261,7 +333,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const persistPing = useCallback((ping: LocationPing) => {
     setState((s) => {
       const last = s.pings[s.pings.length - 1];
-      if (last && Math.abs(last.lat - ping.lat) < 0.00005 && Math.abs(last.lng - ping.lng) < 0.00005) {
+      if (
+        last &&
+        last.userId === ping.userId &&
+        Math.abs(last.lat - ping.lat) < 0.00005 &&
+        Math.abs(last.lng - ping.lng) < 0.00005
+      ) {
         return s;
       }
       const tagged: LocationPing = {
@@ -272,7 +349,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const openShift = useMemo(() => state.shifts.find((s) => !s.clockOut) ?? null, [state.shifts]);
+  const user = session?.user ?? null;
+  const isOperations = user?.role === "operations_manager";
+  const directory = useMemo(() => {
+    const byId = new Map(USERS.map((person) => [person.id, person]));
+    if (user) byId.set(user.id, user);
+    return [...byId.values()];
+  }, [user]);
+
+  const openShift = useMemo(
+    () => state.shifts.find((s) => s.userId === user?.id && !s.clockOut) ?? null,
+    [state.shifts, user?.id],
+  );
 
   const audit = useCallback((label: string) => {
     setState((s) => ({
@@ -281,22 +369,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const queueIfOffline = useCallback(
-    (label: string) => {
-      if (online) return;
-      setState((s) => ({
-        ...s,
-        offlineQueue: [
-          { id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: new Date().toISOString(), label, synced: false },
-          ...s.offlineQueue,
-        ],
-      }));
-    },
-    [online],
-  );
+  const enqueue = useCallback((label: string, op?: FieldOpsMutation) => {
+    const idempotencyKey =
+      op?.type === "create_task"
+        ? `create_task:${op.payload.id}`
+        : op?.type === "assign_task"
+          ? `assign_task:${op.payload.taskId}:${op.payload.assigneeId}:${op.payload.assignedAt}`
+          : op?.type === "set_task_status"
+            ? `set_task_status:${op.payload.taskId}:${op.payload.status}`
+            : op?.type === "clock_in"
+              ? `clock_in:${op.payload.id}`
+              : op?.type === "clock_out"
+                ? `clock_out:${op.payload.shiftId}:${op.payload.clockOut}`
+                : op?.type === "request_leave"
+                  ? `request_leave:${op.payload.id}`
+                  : op?.type === "review_leave"
+                    ? `review_leave:${op.payload.id}:${op.payload.status}`
+                    : op?.type === "add_expense"
+                      ? `add_expense:${op.payload.id}`
+                      : op?.type === "review_expense"
+                        ? `review_expense:${op.payload.id}:${op.payload.status}`
+                        : `evt:${Date.now()}`;
+    const row: OfflineItem = {
+      id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      at: new Date().toISOString(),
+      label,
+      synced: false,
+      status: "pending",
+      retries: 0,
+      idempotencyKey,
+      op,
+    };
+    setState((s) => {
+      if (s.offlineQueue.some((item) => item.idempotencyKey === idempotencyKey && item.status !== "failed")) {
+        return s;
+      }
+      return { ...s, offlineQueue: [row, ...s.offlineQueue].slice(0, 200) };
+    });
+  }, []);
 
   useEffect(() => {
-    if (!ready || !state.userId) {
+    if (!ready || !user?.id) {
       return;
     }
 
@@ -319,6 +432,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           lng: fix.lng,
           accuracyM: fix.accuracyM,
           source: "simulated",
+          userId: user?.id,
         });
       }
       return;
@@ -353,6 +467,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             lng: fix.lng,
             accuracyM: fix.accuracyM,
             source: "gps",
+            userId: user?.id,
           });
         }
       } catch {
@@ -378,6 +493,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               lng: fix.lng,
               accuracyM: fix.accuracyM,
               source: "gps",
+              userId: user?.id,
             });
           }
         },
@@ -388,7 +504,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       sub?.remove();
     };
-  }, [locationMode, ready, state.userId, openShift, persistPing, gpsTick]);
+  }, [locationMode, ready, user?.id, openShift, persistPing, gpsTick]);
 
   const cityManager = useMemo(() => {
     const point = live ?? { lat: BANJARA.geo.lat, lng: BANJARA.geo.lng };
@@ -400,26 +516,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setGpsTick((n) => n + 1);
   }, []);
 
-  const user = useMemo(() => USERS.find((u) => u.id === state.userId) ?? null, [state.userId]);
-
-  const login = useCallback((email: string, password: string) => {
-    const found = USERS.find(
-      (u) => u.email.toLowerCase() === email.trim().toLowerCase() && u.password === password,
-    );
-    if (!found) return "Email or password is incorrect.";
+  const login = useCallback(async (email: string, password: string) => {
+    const trimmed = email.trim();
     const device = Platform.OS === "web" ? "web-demo" : `${Platform.OS}-bound`;
-    setState((s) => ({
-      ...s,
-      userId: found.id,
-      deviceBoundId: `${found.employeeId}:${device}`,
-    }));
-    return null;
+    const applyUser = (next: FieldUser, token: string | null) => {
+      setSession({ user: next, token });
+      setState((s) => ({
+        ...s,
+        userId: next.id,
+        deviceBoundId: `${next.employeeId}:${device}`,
+      }));
+    };
+
+    if (isDemoMode() && matchDemoPassword(trimmed, password)) {
+      const found = USERS.find((person) => person.email.toLowerCase() === trimmed.toLowerCase());
+      if (found) {
+        applyUser(found, null);
+        return null;
+      }
+    }
+
+    const remote = await loginCamartes(trimmed, password);
+    if (remote.ok) {
+      applyUser(remote.session.user, remote.session.token);
+      return null;
+    }
+    return remote.error;
   }, []);
 
   const logout = useCallback(() => {
+    const token = session?.token ?? null;
+    setSession(null);
     setState((s) => ({ ...s, userId: null }));
     setLive(null);
-  }, []);
+    void logoutCamartes(token);
+  }, [session?.token]);
 
   const clockIn = useCallback(
     (opts?: {
@@ -428,19 +559,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       safetyHelmet?: boolean;
       safetyTwoWheeler?: boolean;
     }) => {
-      if (state.shifts.some((sh) => !sh.clockOut)) return "Already on shift.";
+      if (!user || user.role !== "field_executive") return "Only a field executive can clock in.";
+      if (state.shifts.some((sh) => sh.userId === user.id && !sh.clockOut)) return "Already on shift.";
       if (!opts?.safetyHelmet || !opts?.safetyTwoWheeler) {
         return "safety";
       }
-      if (!opts?.selfieUri && Platform.OS !== "web") {
-        /* selfie encouraged; web demo may skip */
-      }
       const now = new Date();
       const geo = geoFromSelection(locationMode, live);
+      const mine = state.tasks.filter((task) => task.assigneeId === user.id);
       const gate = evaluateShiftClockIn({
         geo: geo ?? null,
         now,
-        tasks: state.tasks,
+        tasks: mine,
         roster: ROSTER,
         overrideReason: opts?.overrideReason,
       });
@@ -449,7 +579,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       const geofenceOk = gate.via !== "override";
       const shift: Shift = {
-        id: `sh-${now.getTime()}`,
+        id: `sh-${user.id}-${now.getTime()}`,
+        userId: user.id,
         date: format(now, "yyyy-MM-dd"),
         clockIn: now.toISOString(),
         clockInGeo: geo,
@@ -469,44 +600,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           at: now.toISOString(),
         });
       }
-      queueIfOffline("Clock in");
+      enqueue("Clock in", { type: "clock_in", payload: shift });
       const viaLabel =
         gate.via === "first_task"
           ? `within 5 km of first stop${gate.firstTask ? ` ${gate.firstTask.id}` : ""}${gate.kmToFirst != null ? ` (${formatKm(gate.kmToFirst)})` : ""}`
           : gate.via === "roster"
             ? `roster login ${gate.rosterWindow ?? ""}`.trim()
             : `override: ${opts?.overrideReason}`;
-      audit(`Clock in · ${viaLabel} · ${user?.employeeId}`);
+      audit(`Clock in · ${viaLabel} · ${user.employeeId}`);
       return null;
     },
-    [state.shifts, state.tasks, live, locationMode, queueIfOffline, audit, user?.employeeId],
+    [state.shifts, state.tasks, live, locationMode, enqueue, audit, user],
   );
 
   const clockOut = useCallback(() => {
+    if (!user) return;
+    const now = new Date().toISOString();
+    const current = state.shifts.find((sh) => sh.userId === user.id && !sh.clockOut);
     setState((s) => ({
       ...s,
       shifts: s.shifts.map((sh) =>
-        sh.clockOut
-          ? sh
-          : {
+        sh.userId === user.id && !sh.clockOut
+          ? {
               ...sh,
-              clockOut: new Date().toISOString(),
+              clockOut: now,
               clockOutGeo: geoFromSelection(locationMode, live),
-            },
+            }
+          : sh,
       ),
     }));
-    queueIfOffline("Clock out");
+    if (current) enqueue("Clock out", { type: "clock_out", payload: { shiftId: current.id, clockOut: now } });
     audit("Clock out");
-  }, [live, locationMode, queueIfOffline, audit]);
+  }, [live, locationMode, enqueue, audit, user, state.shifts]);
 
   const requestOt = useCallback(() => {
     setState((s) => ({
       ...s,
-      shifts: s.shifts.map((sh) => (!sh.clockOut ? { ...sh, otRequested: true } : sh)),
+      shifts: s.shifts.map((sh) => (!sh.clockOut && sh.userId === user?.id ? { ...sh, otRequested: true } : sh)),
     }));
-    queueIfOffline("Overtime request");
+    enqueue("Overtime request");
     audit("Overtime requested for current shift");
-  }, [queueIfOffline, audit]);
+  }, [enqueue, audit]);
 
   const updateTask = useCallback((id: string, patch: Partial<FieldTask>) => {
     setState((s) => ({
@@ -517,7 +651,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const assignTask = useCallback(
     (taskId: string, assigneeId: string) => {
-      const assignee = USERS.find((person) => person.id === assigneeId);
+      if (user?.role !== "operations_manager") return;
+      const assignee = directory.find((person) => person.id === assigneeId);
       if (!assignee) return;
       const at = new Date().toISOString();
       setState((s) => ({
@@ -528,6 +663,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ...task,
                 assigneeId,
                 assignedAt: at,
+                status: task.status === "completed" ? task.status : task.status === "blocked" ? task.status : "assigned",
                 timeline: [
                   ...task.timeline,
                   {
@@ -540,9 +676,74 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : task,
         ),
       }));
+      enqueue(`Dispatch assigned ${taskId}`, {
+        type: "assign_task",
+        payload: { taskId, assigneeId, assignedAt: at },
+      });
       audit(`Dispatch assigned ${taskId} to ${assignee.employeeId}`);
     },
-    [audit],
+    [audit, directory, enqueue, user?.role],
+  );
+
+  const createTask = useCallback(
+    (input: CreateTaskInput) => {
+      if (user?.role !== "operations_manager") return "Only operations can create tasks.";
+      if (!input.title.trim()) return "Title is required.";
+      if (!input.dueAt.trim()) return "Due date is required.";
+      const nums = state.tasks
+        .map((task) => Number(String(task.id).replace(/\D/g, "")))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      const id = `TSK-${Math.max(5000, ...nums, 0) + 1}`;
+      const at = new Date().toISOString();
+      const area = input.area.trim() || "Hyderabad";
+      const vendor = input.vendorId ? state.vendors.find((row) => row.id === input.vendorId) : undefined;
+      const customerName = input.customerName.trim() || vendor?.name || "Customer";
+      const place = {
+        id: `place-${id}`,
+        name: customerName,
+        address: input.address?.trim() || area,
+        area,
+        phone: input.customerPhone?.trim(),
+        geo: vendor?.geo ?? BANJARA.geo,
+      };
+      const assignee = input.assigneeId ? directory.find((person) => person.id === input.assigneeId) : undefined;
+      const task: FieldTask = {
+        id,
+        kind: input.kind,
+        title: input.title.trim(),
+        bookingRef: `BK-${id.replace("TSK-", "")}`,
+        assigneeId: assignee?.id,
+        assignedAt: assignee ? at : undefined,
+        customerName,
+        customerPhone: input.customerPhone?.trim() || vendor?.phone || "",
+        status: "assigned",
+        scheduledFor: input.dueAt,
+        store: BANJARA,
+        customerPlace: place,
+        items: [],
+        notes: input.description.trim(),
+        photos: [],
+        timeline: [
+          {
+            id: `ev-${Date.now()}`,
+            at,
+            label: assignee
+              ? `Created by operations and assigned to ${assignee.name}`
+              : "Created by operations · unassigned",
+          },
+        ],
+        slaMinutes: 90,
+        priority: input.priority,
+        createdBy: user.id,
+        createdAt: at,
+        vendorId: vendor?.id,
+      };
+      setState((s) => ({ ...s, tasks: [task, ...s.tasks] }));
+      enqueue(`Created ${id}`, { type: "create_task", payload: task });
+      audit(`Created ${id}${assignee ? ` for ${assignee.employeeId}` : " (unassigned)"}`);
+      return null;
+    },
+    [audit, directory, enqueue, state.tasks, state.vendors, user],
   );
 
   const addPhoto = useCallback((taskId: string, photo: GeoPhoto) => {
@@ -571,11 +772,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
       };
     });
-    queueIfOffline(`Photo ${photo.checkpoint}`);
+    enqueue(`Photo ${photo.checkpoint}`);
     audit(`Photo ${photo.checkpoint} on ${taskId}`);
-  }, [queueIfOffline, audit]);
+  }, [enqueue, audit]);
 
   const setTaskStatus = useCallback((id: string, status: TaskStatus, label: string) => {
+    const task = state.tasks.find((row) => row.id === id);
+    if (!task) return;
+    const allowed =
+      user?.role === "operations_manager" || (user?.role === "field_executive" && task.assigneeId === user.id);
+    if (!allowed) return;
     setState((s) => ({
       ...s,
       tasks: s.tasks.map((t) =>
@@ -590,9 +796,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : t,
       ),
     }));
-    queueIfOffline(label);
+    enqueue(label, { type: "set_task_status", payload: { taskId: id, status, label } });
     audit(label);
-  }, [queueIfOffline, audit]);
+  }, [audit, enqueue, state.tasks, user]);
 
   const generateOtp = useCallback(
     (taskId: string) => {
@@ -622,10 +828,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         t.id === taskId ? { ...t, otpVerified: true, customerConfirmed: true } : t,
       ),
     }));
-    queueIfOffline(`Handover PIN ${taskId}`);
+    enqueue(`Handover PIN ${taskId}`);
     audit(`In-app OTP confirmed on ${taskId}`);
     return true;
-  }, [state.tasks, queueIfOffline, audit]);
+  }, [state.tasks, enqueue, audit]);
 
   const matchSerial = useCallback((taskId: string, serial: string) => {
     const task = state.tasks.find((t) => t.id === taskId);
@@ -641,10 +847,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!hit) return false;
     const next = Array.from(new Set([...(task.scannedSerials ?? []), hit.serial]));
     updateTask(taskId, { scannedSerials: next });
-    queueIfOffline(`Serial match ${taskId}`);
+    enqueue(`Serial match ${taskId}`);
     audit(`Serial ${hit.serial} matched on ${taskId}`);
     return true;
-  }, [state.tasks, updateTask, queueIfOffline, audit]);
+  }, [state.tasks, updateTask, enqueue, audit]);
 
   const checkInTask = useCallback(
     (taskId: string) => {
@@ -691,11 +897,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : t,
         ),
       }));
-      queueIfOffline(`Check-in ${taskId}`);
+      enqueue(`Check-in ${taskId}`);
       audit(`GPS check-in ${taskId}`);
       return null;
     },
-    [state.tasks, locationMode, live, queueIfOffline, audit],
+    [state.tasks, locationMode, live, enqueue, audit],
   );
 
   const logAttempt = useCallback(
@@ -717,23 +923,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             : t,
         ),
       }));
-      queueIfOffline(`Attempt ${taskId} ${code}`);
+      enqueue(`Attempt ${taskId} ${code}`);
       audit(`Failed attempt ${code} on ${taskId}`);
     },
-    [queueIfOffline, audit],
+    [enqueue, audit],
   );
 
   const saveKitCondition = useCallback((taskId: string, which: "pickup" | "return", condition: KitCondition) => {
     updateTask(taskId, which === "pickup" ? { kitPickupCondition: condition } : { kitReturnCondition: condition });
-    queueIfOffline(`Kit ${which} condition ${taskId}`);
+    enqueue(`Kit ${which} condition ${taskId}`);
     audit(`Kit ${which} condition ${condition.overall} on ${taskId}`);
-  }, [updateTask, queueIfOffline, audit]);
+  }, [updateTask, enqueue, audit]);
 
   const saveSignature = useCallback((taskId: string, svg: string) => {
     updateTask(taskId, { signatureSvg: svg });
-    queueIfOffline(`POD signature ${taskId}`);
+    enqueue(`POD signature ${taskId}`);
     audit(`POD signature captured on ${taskId}`);
-  }, [updateTask, queueIfOffline, audit]);
+  }, [updateTask, enqueue, audit]);
 
   const sendWhatsApp = useCallback(
     (taskId: string, kind: "eta" | "delivered" | "collected") => {
@@ -758,23 +964,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (report: Omit<DamageReport, "id" | "at">) => {
       const row: DamageReport = { ...report, id: `DM-${Date.now()}`, at: new Date().toISOString() };
       setState((s) => ({ ...s, damages: [row, ...s.damages] }));
-      queueIfOffline(`Damage report ${report.taskId}`);
+      enqueue(`Damage report ${report.taskId}`);
       audit(`Damage reported ${report.serial}`);
     },
-    [queueIfOffline, audit],
+    [enqueue, audit],
   );
 
-  const addExpense = useCallback((claim: Omit<ExpenseClaim, "id" | "status">) => {
-    setState((s) => ({
-      ...s,
-      expenses: [
-        { ...claim, id: `EX-${Date.now()}`, status: "submitted" },
-        ...s.expenses,
-      ],
-    }));
-    queueIfOffline(`Expense ₹${claim.amountInr}`);
+  const addExpense = useCallback((claim: { date: string; km: number; amountInr: number; note: string }) => {
+    if (!user) return;
+    const row: ExpenseClaim = {
+      ...claim,
+      id: `EX-${Date.now()}`,
+      userId: user.id,
+      status: "submitted",
+      createdAt: new Date().toISOString(),
+    };
+    setState((s) => ({ ...s, expenses: [row, ...s.expenses] }));
+    enqueue(`Expense ₹${claim.amountInr}`, { type: "add_expense", payload: row });
     audit(`Expense ₹${claim.amountInr} submitted`);
-  }, [queueIfOffline, audit]);
+  }, [enqueue, audit, user]);
 
   const markTraining = useCallback((id: string) => {
     setState((s) => ({
@@ -817,39 +1025,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       days: number;
       reason: string;
     }) => {
+      if (!user) return;
+      const at = new Date().toISOString();
       const req: LeaveRequest = {
         id: `LV-${Date.now()}`,
+        userId: user.id,
         ...input,
         status: "pending",
-        submittedAt: new Date().toISOString(),
+        submittedAt: at,
+        createdAt: at,
       };
       setState((s) => ({ ...s, leaves: [req, ...s.leaves] }));
-      queueIfOffline(`Leave request ${input.from}`);
+      enqueue(`Leave request ${input.from}`, { type: "request_leave", payload: req });
       audit(`Leave requested ${input.type} ${input.from}`);
     },
-    [queueIfOffline, audit],
+    [enqueue, audit, user],
   );
 
   const reviewLeave = useCallback(
     (id: string, status: "approved" | "rejected") => {
+      if (user?.role !== "operations_manager") return;
+      const at = new Date().toISOString();
       setState((s) => ({
         ...s,
-        leaves: s.leaves.map((leave) => (leave.id === id ? { ...leave, status } : leave)),
+        leaves: s.leaves.map((leave) =>
+          leave.id === id ? { ...leave, status, reviewedAt: at, reviewedBy: user.id } : leave,
+        ),
       }));
-      audit(`Leave ${id} ${status} by operations`);
+      enqueue(`Leave ${id} ${status}`, {
+        type: "review_leave",
+        payload: { id, status, reviewedAt: at, reviewedBy: user.id },
+      });
+      audit(`Leave ${id} ${status} by ${user.employeeId}`);
     },
-    [audit],
+    [audit, enqueue, user],
   );
 
   const reviewExpense = useCallback(
     (id: string, status: "approved" | "rejected") => {
+      if (user?.role !== "operations_manager") return;
+      const at = new Date().toISOString();
       setState((s) => ({
         ...s,
-        expenses: s.expenses.map((expense) => (expense.id === id ? { ...expense, status } : expense)),
+        expenses: s.expenses.map((expense) =>
+          expense.id === id ? { ...expense, status, reviewedAt: at, reviewedBy: user.id } : expense,
+        ),
       }));
-      audit(`Expense ${id} ${status} by operations`);
+      enqueue(`Expense ${id} ${status}`, {
+        type: "review_expense",
+        payload: { id, status, reviewedAt: at, reviewedBy: user.id },
+      });
+      audit(`Expense ${id} ${status} by ${user.employeeId}`);
     },
-    [audit],
+    [audit, enqueue, user],
   );
 
   const logVendorVisit = useCallback(
@@ -960,10 +1188,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ),
       }));
       audit(`Vendor visit ${input.profile.name.trim()} · ${interest}${onSite ? " · on site" : " · off site"}`);
-      queueIfOffline(`Vendor visit ${input.profile.name.trim()}`);
+      enqueue(`Vendor visit ${input.profile.name.trim()}`);
       return { partnerCode: outcome === "onboarded" ? partnerCode : undefined };
     },
-    [state.vendors, live, audit, queueIfOffline],
+    [state.vendors, live, audit, enqueue],
   );
 
   const onboardVendor = useCallback(
@@ -984,11 +1212,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }),
       }));
       const vendor = state.vendors.find((v) => v.id === vendorId);
-      queueIfOffline(`Onboard vendor ${vendor?.name ?? vendorId}`);
+      enqueue(`Onboard vendor ${vendor?.name ?? vendorId}`);
       audit(`Onboarded ${vendor?.name ?? vendorId} as ${code}`);
       return code;
     },
-    [audit, queueIfOffline, state.vendors],
+    [audit, enqueue, state.vendors],
   );
 
   const addWalkInVendor = useCallback(
@@ -1028,11 +1256,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         geoApprox: !live,
       };
       setState((s) => ({ ...s, vendors: [vendor, ...s.vendors] }));
-      queueIfOffline(`Walk-in lead ${vendor.name}`);
+      enqueue(`Walk-in lead ${vendor.name}`);
       audit(`Walk-in onboarding lead ${vendor.name}`);
       return vendor.id;
     },
-    [live, queueIfOffline, audit],
+    [live, enqueue, audit],
   );
 
   const resetDemo = useCallback(() => {
@@ -1043,6 +1271,70 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setState(next);
     void AsyncStorage.setItem(KEY, JSON.stringify(next));
   }, [state.userId, state.language, state.deviceBoundId]);
+
+  const flushQueue = useCallback(async () => {
+    const pending = state.offlineQueue.filter((item) => item.status === "pending" && item.op);
+    if (!pending.length) return;
+    const probe = await probeFieldOps();
+    setFieldOpsAvailable(probe.available);
+    setFieldOpsReason(probe.reason);
+    for (const item of pending) {
+      const result = await pushFieldOpsMutation(item, session?.token ?? null);
+      setState((s) => ({
+        ...s,
+        offlineQueue: s.offlineQueue.map((row) => {
+          if (row.id !== item.id) return row;
+          if (result.ok) return { ...row, synced: true, status: "success" as const, lastError: undefined };
+          return {
+            ...row,
+            status: result.retryable ? ("pending" as const) : ("failed" as const),
+            retries: (row.retries ?? 0) + 1,
+            lastRetryAt: new Date().toISOString(),
+            lastError: result.error,
+          };
+        }),
+      }));
+    }
+  }, [session?.token, state.offlineQueue]);
+
+  useEffect(() => {
+    if (!ready) return;
+    void probeFieldOps().then((probe) => {
+      setFieldOpsAvailable(probe.available);
+      setFieldOpsReason(probe.reason);
+    });
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready || !online) return;
+    const pending = state.offlineQueue.some((item) => item.status === "pending" && item.op);
+    if (!pending) return;
+    void flushQueue();
+  }, [ready, online, state.offlineQueue, flushQueue]);
+
+  const myTasks = useMemo(
+    () =>
+      isOperations
+        ? state.tasks
+        : state.tasks.filter((task) => !!user?.id && task.assigneeId === user.id),
+    [isOperations, state.tasks, user?.id],
+  );
+  const myLeaves = useMemo(
+    () => (isOperations ? state.leaves : state.leaves.filter((row) => row.userId === user?.id)),
+    [isOperations, state.leaves, user?.id],
+  );
+  const myExpenses = useMemo(
+    () => (isOperations ? state.expenses : state.expenses.filter((row) => row.userId === user?.id)),
+    [isOperations, state.expenses, user?.id],
+  );
+  const myShifts = useMemo(
+    () => (isOperations ? state.shifts : state.shifts.filter((row) => row.userId === user?.id)),
+    [isOperations, state.shifts, user?.id],
+  );
+  const team = useMemo(
+    () => buildTeamPresence(state, directory, user?.id, live),
+    [directory, live, state, user?.id],
+  );
 
   const value: AppContextValue = {
     ready,
@@ -1055,6 +1347,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setLanguage,
     login,
     logout,
+    isDemoMode: isDemoMode(),
+    isOperations,
+    authSource: user?.source ?? null,
+    fieldOpsAvailable,
+    fieldOpsReason,
+    createTask,
+    team,
+    myTasks,
+    myLeaves,
+    myExpenses,
+    myShifts,
+    flushQueue,
     clockIn,
     checkInTask,
     logAttempt,
