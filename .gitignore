@@ -41,3 +41,11 @@ yarn-error.*
 /ios
 /android
 /apk-dist
+
+# Any local env file (staging/production credentials included); only examples are tracked
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+!.env.production.example
+!**/.env.production.example

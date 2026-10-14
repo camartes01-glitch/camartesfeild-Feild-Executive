@@ -1,246 +1,186 @@
-import { differenceInMinutes, parseISO } from "date-fns";
-import { BANJARA, HITEC } from "@/lib/seed";
-import { GEOFENCE_KM, haversineKm } from "@/lib/geo";
-import type {
-  AttemptCode,
-  FieldTask,
-  GeoPoint,
-  KitConditionGrade,
-  LocationPing,
-  PingActivity,
-  Vendor,
-} from "@/lib/types";
+/**
+ * Presentation helpers. Business decisions (radius, SLA status, PIN, custody) are made by the
+ * server; these functions only decide what to show and which step comes next.
+ */
+import { haversineKm } from "@/lib/geo";
+import type { GeoPoint, Home, Sla, SlaStatus, Task, TaskDetail, TaskState } from "@/lib/types";
 
-export const CHECK_IN_KM = 0.15;
-/** Shift punch-in: within this distance of the day's first assigned stop. */
-export const SHIFT_START_KM = 5;
-/** Minutes before roster start when login is allowed. */
-export const LOGIN_EARLY_MIN = 30;
-
-export type RosterRow = { date: string; window: string };
-
-export function istYmd(d = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
+/** Server clock minus device clock, captured when a response carries `serverTime`. */
+export function clockOffsetMs(serverTime: string | null | undefined, deviceNow = Date.now()): number {
+  const t = serverTime ? Date.parse(serverTime) : NaN;
+  return Number.isFinite(t) ? t - deviceNow : 0;
 }
 
-export function addYmd(ymd: string, days: number): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + days));
-  return dt.toISOString().slice(0, 10);
-}
+export type SlaView = { status: SlaStatus | null; tone: "green" | "peach" | "red" | "default"; remainingSec: number | null };
 
-export function istMinutesOfDay(d = new Date()): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(d);
-  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
-  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
-  return hour * 60 + minute;
-}
-
-export function parseRosterWindow(window: string): { startMin: number; endMin: number } | null {
-  const m = window.match(/(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  return { startMin: Number(m[1]) * 60 + Number(m[2]), endMin: Number(m[3]) * 60 + Number(m[4]) };
-}
-
-export function rosterLoginOpen(roster: RosterRow[], now = new Date(), earlyMin = LOGIN_EARLY_MIN) {
-  const ymd = istYmd(now);
-  const row = roster.find((r) => r.date === ymd);
-  if (!row) return { ok: false, window: null as string | null, date: ymd };
-  const parsed = parseRosterWindow(row.window);
-  if (!parsed) return { ok: false, window: row.window, date: ymd };
-  const mins = istMinutesOfDay(now);
-  const ok = mins >= parsed.startMin - earlyMin && mins <= parsed.endMin;
-  return { ok, window: row.window, date: ymd };
-}
-
-export function firstAssignedTask(tasks: FieldTask[], ymd: string): FieldTask | null {
-  const open = tasks.filter(
-    (t) => t.scheduledFor.slice(0, 10) === ymd && t.status !== "completed" && t.status !== "blocked",
-  );
-  if (!open.length) return null;
-  return [...open].sort(
-    (a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor),
-  )[0];
-}
-
-export type ShiftClockInVia = "first_task" | "roster" | "override";
-
-export type ShiftClockInEval = {
-  allowed: boolean;
-  via: ShiftClockInVia | null;
-  firstTask: FieldTask | null;
-  kmToFirst: number | null;
-  rosterOk: boolean;
-  geoOk: boolean;
-  rosterWindow: string | null;
-};
-
-export function evaluateShiftClockIn(args: {
-  geo: GeoPoint | null;
-  now?: Date;
-  tasks: FieldTask[];
-  roster: RosterRow[];
-  overrideReason?: string;
-}): ShiftClockInEval {
-  const now = args.now ?? new Date();
-  const ymd = istYmd(now);
-  const first = firstAssignedTask(args.tasks, ymd);
-  let kmToFirst: number | null = null;
-  let geoOk = false;
-  if (args.geo && first) {
-    kmToFirst = haversineKm(args.geo, checkInTarget(first));
-    geoOk = kmToFirst <= SHIFT_START_KM;
+/**
+ * Live countdown for display. The deadline and status come from the server; the ticking uses the
+ * server-corrected clock (device time + offset), so a wrong phone clock cannot hide a breach.
+ */
+export function slaView(sla: Sla | null | undefined, offsetMs: number, atRiskMin: number, deviceNow = Date.now(), completed = false): SlaView {
+  if (!sla || !sla.dueAt || sla.status === null) return { status: null, tone: "default", remainingSec: null };
+  if (completed) {
+    return { status: sla.status, tone: sla.status === "BREACHED" ? "red" : "green", remainingSec: sla.remainingSeconds };
   }
-  const roster = rosterLoginOpen(args.roster, now);
-  const override = Boolean(args.overrideReason?.trim());
-  if (geoOk) {
-    return {
-      allowed: true,
-      via: "first_task",
-      firstTask: first,
-      kmToFirst,
-      rosterOk: roster.ok,
-      geoOk,
-      rosterWindow: roster.window,
-    };
+  const remaining = Math.round((Date.parse(sla.dueAt) - (deviceNow + offsetMs)) / 1000);
+  // Never show a better state than the server reported.
+  const derived: SlaStatus = remaining < 0 ? "BREACHED" : remaining <= atRiskMin * 60 ? "AT_RISK" : "ON_TRACK";
+  const rank: Record<SlaStatus, number> = { ON_TRACK: 0, AT_RISK: 1, BREACHED: 2 };
+  const status = rank[sla.status] > rank[derived] ? sla.status : derived;
+  return { status, tone: status === "BREACHED" ? "red" : status === "AT_RISK" ? "peach" : "green", remainingSec: remaining };
+}
+
+export function formatCountdown(seconds: number | null): string {
+  if (seconds === null) return "—";
+  const abs = Math.abs(seconds);
+  const h = Math.floor(abs / 3600);
+  const m = Math.floor((abs % 3600) / 60);
+  const body = h > 0 ? `${h}h ${m}m` : `${Math.max(m, abs > 0 && m === 0 ? 1 : 0)}m`;
+  return seconds < 0 ? `-${body}` : body;
+}
+
+export const KIT_KINDS = new Set(["pickup", "delivery", "return"]);
+
+export type Step =
+  | "START_ROUTE"
+  | "ARRIVE"
+  | "CHECK_IN"
+  | "START_WORK"
+  | "SERIALS"
+  | "KIT"
+  | "PHOTO"
+  | "PIN"
+  | "POD"
+  | "COMPLETE"
+  | "RETRY"
+  | "DONE"
+  | "CANCELLED";
+
+/** The single next thing the employee must do, derived from server state and evidence. */
+export function nextStep(task: TaskDetail | Task, evidence?: TaskDetail["evidence"] | null): Step {
+  const state: TaskState = task.state;
+  if (state === "COMPLETED") return "DONE";
+  if (state === "CANCELLED") return "CANCELLED";
+  if (state === "FAILED_ATTEMPT") return "RETRY";
+  if (state === "ASSIGNED" || state === "RETRY" || state === "UNASSIGNED") return "START_ROUTE";
+  if (state === "EN_ROUTE") return "ARRIVE";
+  if (state === "ARRIVED") return "CHECK_IN";
+  if (state === "CHECKED_IN") return "START_WORK";
+  if (KIT_KINDS.has(task.kind)) {
+    if (task.items.some((i) => !i.serialVerified)) return "SERIALS";
+    const graded = new Set((evidence?.kitConditions ?? []).map((k) => k.itemId));
+    if (task.items.some((i) => !graded.has(i.itemId))) return "KIT";
   }
-  if (roster.ok) {
-    return {
-      allowed: true,
-      via: "roster",
-      firstTask: first,
-      kmToFirst,
-      rosterOk: true,
-      geoOk,
-      rosterWindow: roster.window,
-    };
-  }
-  if (override) {
-    return {
-      allowed: true,
-      via: "override",
-      firstTask: first,
-      kmToFirst,
-      rosterOk: roster.ok,
-      geoOk,
-      rosterWindow: roster.window,
-    };
-  }
-  return {
-    allowed: false,
-    via: null,
-    firstTask: first,
-    kmToFirst,
-    rosterOk: roster.ok,
-    geoOk,
-    rosterWindow: roster.window,
+  const photos = (evidence?.photos ?? []).filter((p) => p.attemptNo === task.attemptNo);
+  if (photos.length === 0) return "PHOTO";
+  if (evidence?.pinRequired && evidence.pin?.state !== "VERIFIED") return "PIN";
+  if (evidence?.podRequired && !evidence.pod) return "POD";
+  return "COMPLETE";
+}
+
+type PendingAction = { path: string; body: Record<string, unknown>; status: string };
+
+/**
+ * Overlay the employee's own queued (unsynced) steps on the last server state so offline work
+ * can continue. The result is only used to pick the next step; everything it adds is shown as
+ * "waiting to sync", never as confirmed.
+ */
+export function projectTask(task: TaskDetail, pending: PendingAction[]): { task: TaskDetail; pendingSteps: Set<string> } {
+  const live = pending.filter((p) => p.status !== "FAILED" && p.status !== "SYNCED");
+  if (!live.length) return { task, pendingSteps: new Set() };
+  const next: TaskDetail = {
+    ...task,
+    items: task.items.map((i) => ({ ...i })),
+    evidence: {
+      ...task.evidence,
+      photos: [...task.evidence.photos],
+      kitConditions: [...task.evidence.kitConditions],
+    },
   };
-}
-
-export const ATTEMPT_LABELS: Record<AttemptCode, string> = {
-  nsz: "NSZ — no such zone",
-  customer_unavailable: "Customer unavailable",
-  kit_refused: "Kit refused",
-  weather: "Weather / access",
-  vehicle: "Vehicle / breakdown",
-  address: "Wrong / incomplete address",
-  other: "Other",
-};
-
-export const KIT_GRADES: { id: KitConditionGrade; label: string }[] = [
-  { id: "good", label: "Good" },
-  { id: "scuff", label: "Scuff" },
-  { id: "dent", label: "Dent" },
-  { id: "missing", label: "Missing parts" },
-];
-
-export type SlaState = {
-  remainingMin: number;
-  dueAt: string;
-  tone: "ok" | "warn" | "late";
-  label: string;
-};
-
-export function slaState(task: FieldTask, now = new Date()): SlaState {
-  const due = parseISO(task.scheduledFor);
-  const remainingMin = differenceInMinutes(due, now);
-  const tone: SlaState["tone"] =
-    remainingMin < 0 ? "late" : remainingMin <= 45 ? "warn" : "ok";
-  const abs = Math.abs(remainingMin);
-  const h = Math.floor(abs / 60);
-  const m = abs % 60;
-  const clock = h > 0 ? `${h}h ${m}m` : `${m}m`;
-  const label =
-    remainingMin < 0 ? `SLA ${clock} late` : remainingMin === 0 ? "SLA due now" : `SLA ${clock} left`;
-  return { remainingMin, dueAt: task.scheduledFor, tone, label };
-}
-
-export type TaskCheckInStage = "store" | "customer";
-
-export function nextCheckInStage(task: FieldTask): TaskCheckInStage {
-  if (task.kind === "delivery") return task.storeCheckedInAt ? "customer" : "store";
-  if (task.kind === "return") return task.customerCheckedInAt ? "store" : "customer";
-  return task.kind === "inventory" ? "store" : "customer";
-}
-
-export function checkInProgress(task: FieldTask): { done: number; total: number } {
-  if (task.kind === "delivery" || task.kind === "return") {
-    return {
-      done: Number(Boolean(task.storeCheckedInAt)) + Number(Boolean(task.customerCheckedInAt)),
-      total: 2,
-    };
-  }
-  return { done: task.checkedInAt ? 1 : 0, total: 1 };
-}
-
-export function checkInTarget(task: FieldTask): GeoPoint {
-  return nextCheckInStage(task) === "store" ? task.store.geo : task.customerPlace.geo;
-}
-
-export function classifyActivity(
-  point: GeoPoint,
-  tasks: FieldTask[],
-  vendors: Vendor[],
-): PingActivity {
-  const hubKm = Math.min(haversineKm(point, BANJARA.geo), haversineKm(point, HITEC.geo));
-  if (hubKm <= GEOFENCE_KM) return "hub";
-  for (const t of tasks) {
-    if (haversineKm(point, t.customerPlace.geo) <= CHECK_IN_KM) return "customer";
-    if (haversineKm(point, t.store.geo) <= CHECK_IN_KM) return "hub";
-  }
-  for (const v of vendors) {
-    if (v.geoApprox) continue;
-    if (haversineKm(point, v.geo) <= CHECK_IN_KM) return "vendor";
-  }
-  return "travel";
-}
-
-export function activityMinutes(pings: LocationPing[], now = new Date()) {
-  const buckets: Record<PingActivity, number> = {
-    hub: 0,
-    travel: 0,
-    customer: 0,
-    vendor: 0,
-    unknown: 0,
+  const steps = new Set<string>();
+  const stateAfter: Record<string, TaskState> = {
+    "en-route": "EN_ROUTE",
+    arrived: "ARRIVED",
+    "check-in": "CHECKED_IN",
+    start: "IN_PROGRESS",
+    complete: "COMPLETED",
+    fail: "FAILED_ATTEMPT",
+    retry: "RETRY",
   };
-  if (pings.length === 0) return buckets;
-  const sorted = [...pings].sort((a, b) => a.at.localeCompare(b.at));
-  for (let i = 0; i < sorted.length; i++) {
-    const a = sorted[i];
-    const nextAt = i + 1 < sorted.length ? parseISO(sorted[i + 1].at) : now;
-    const mins = Math.min(20, Math.max(0, differenceInMinutes(nextAt, parseISO(a.at))));
-    const key = a.activity ?? "unknown";
-    buckets[key] += mins;
+  for (const p of live) {
+    const action = p.path.split("/").pop() ?? "";
+    steps.add(action);
+    if (stateAfter[action]) next.state = stateAfter[action];
+    if (action === "retry") next.attemptNo = task.attemptNo + 1;
+    if (action === "verify-serial") {
+      const item = next.items.find((i) => i.itemId === p.body.itemId);
+      if (item) item.serialVerified = true;
+    }
+    if (action === "kit-condition") {
+      next.evidence.kitConditions.push({
+        itemId: String(p.body.itemId),
+        grade: p.body.grade as TaskDetail["evidence"]["kitConditions"][number]["grade"],
+        phase: "PENDING",
+        notes: null,
+        at: "",
+      });
+    }
+    if (action === "photos") {
+      next.evidence.photos.push({
+        id: `pending-${next.evidence.photos.length}`,
+        mediaId: "",
+        url: null,
+        checkpoint: String(p.body.checkpoint ?? ""),
+        lat: 0,
+        lng: 0,
+        accuracyM: null,
+        attemptNo: next.attemptNo,
+        at: "",
+      });
+    }
+    if (action === "pod") {
+      next.evidence.pod = { recipientName: String(p.body.recipientName ?? ""), signatureUrl: null, at: "", lat: 0, lng: 0 };
+    }
   }
-  return buckets;
+  return { task: next, pendingSteps: steps };
+}
+
+export type Manager = Home["cityManagers"][number];
+
+/** Offline fallback for SOS: nearest manager by GPS, else the employee's own hub manager. */
+export function nearestManager(fix: GeoPoint | null, managers: Manager[], hubId: string | null): (Manager & { distanceKm: number | null }) | null {
+  if (!managers.length) return null;
+  if (fix) {
+    let best = managers[0];
+    let bestKm = haversineKm(fix, best);
+    for (const m of managers.slice(1)) {
+      const km = haversineKm(fix, m);
+      if (km < bestKm) {
+        best = m;
+        bestKm = km;
+      }
+    }
+    return { ...best, distanceKm: Math.round(bestKm * 100) / 100 };
+  }
+  const own = managers.find((m) => m.hubId === hubId) ?? managers[0];
+  return { ...own, distanceKm: null };
+}
+
+/** Route order for the Jobs list: active first, then by server SLA deadline. */
+export function orderTasks(tasks: Task[]): Task[] {
+  const active = new Set<TaskState>(["EN_ROUTE", "ARRIVED", "CHECKED_IN", "IN_PROGRESS"]);
+  const closed = new Set<TaskState>(["COMPLETED", "CANCELLED"]);
+  return [...tasks].sort((a, b) => {
+    const ga = closed.has(a.state) ? 2 : active.has(a.state) ? 0 : 1;
+    const gb = closed.has(b.state) ? 2 : active.has(b.state) ? 0 : 1;
+    if (ga !== gb) return ga - gb;
+    const da = a.sla.dueAt ? Date.parse(a.sla.dueAt) : Number.POSITIVE_INFINITY;
+    const db = b.sla.dueAt ? Date.parse(b.sla.dueAt) : Number.POSITIVE_INFINITY;
+    return da - db || a.id.localeCompare(b.id);
+  });
+}
+
+export function distanceToStopKm(fix: GeoPoint | null, task: Task): number | null {
+  if (!fix || !task.stop) return null;
+  return haversineKm(fix, task.stop);
 }

@@ -1,641 +1,707 @@
-import { useState } from "react";
-import { Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
-import { Button, Card, Muted } from "@/components/ui";
-import { CheckRow, Chip, ChipWrap, StepRow } from "@/components/chips";
+import { useCallback, useEffect, useState } from "react";
+import { Image, Linking, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
+import { ArrowRight, CircleCheck, ClipboardCheck, Clock, MapPin, PenLine, RefreshCw } from "lucide-react-native";
+import { Badge, Button, Card, Columns, EmptyState, ErrorState, Field, IconCircle, Muted, SectionHeader, StickyFooter } from "@/components/ui";
+import { Chip, ChipWrap, StepRow } from "@/components/chips";
+import { showDialog } from "@/components/dialog";
+import { NavigateButton } from "@/components/navigate-button";
 import { GeoCamera } from "@/components/geo-camera";
-import { MiniMap } from "@/components/mini-map";
 import { SignaturePad } from "@/components/signature-pad";
-import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
-import { colors } from "@/constants/theme";
-import { useApp } from "@/lib/app-context";
-import { ATTEMPT_LABELS, CHECK_IN_KM, KIT_GRADES, checkInProgress, checkInTarget, nextCheckInStage } from "@/lib/field-ops";
-import { formatCoord, formatKm, haversineKm, mapsDirUrl } from "@/lib/geo";
-import { formatWhen } from "@/lib/hours";
-import { t } from "@/lib/i18n";
-import type { AttemptCode, KitCondition, KitConditionGrade, TaskKind } from "@/lib/types";
+import { GpsLine, KindBadge, SlaBadge, StateBadge, kindIcon, useT, useTick } from "@/components/status";
+import { colors, radii, space, type } from "@/constants/theme";
+import { useLayout } from "@/lib/responsive";
+import { useApp, type ActionResult } from "@/lib/app-context";
+import { clockOffsetMs, KIT_KINDS, nextStep, projectTask, slaView, type Step } from "@/lib/field-ops";
+import { formatKm, haversineKm } from "@/lib/geo";
+import { errorText, type I18nKey } from "@/lib/i18n";
+import type { CapturedImage } from "@/lib/media-store";
+import { backToJobs } from "@/lib/nav";
+import { mediaUrl } from "@/lib/ops-api";
+import { signatureDataUri, type Pt } from "@/lib/signature-png";
+import type { FailureCode, KitGrade, TaskDetail } from "@/lib/types";
 
-function checkpoints(kind: TaskKind) {
-  if (kind === "address_verification") return ["Address / nameplate"];
-  if (kind === "delivery") return ["Store pickup", "Customer delivery"];
-  if (kind === "return") return ["Customer pickup", "Store drop"];
-  if (kind === "vendor_visit") return ["Storefront / visiting card"];
-  return ["Shelf / bay"];
-}
+const GRADES: KitGrade[] = ["GOOD", "SCUFF", "DENT", "MISSING"];
 
-export default function TaskDetailScreen() {
-  const { id: idParam } = useLocalSearchParams<{ id: string | string[] }>();
-  const id = Array.isArray(idParam) ? idParam[0] : idParam;
-  const { state, live, setTaskStatus, updateTask, verifyOtp, generateOtp, matchSerial, sendWhatsApp, addDamage, checkInTask, logAttempt, saveKitCondition, saveSignature } =
-    useApp();
-  const lang = state.language;
-  const [otp, setOtp] = useState("");
-  const [pinStep, setPinStep] = useState<"show" | "enter">("show");
-  const [serial, setSerial] = useState("");
-  const [dmg, setDmg] = useState("");
-  const [attemptCode, setAttemptCode] = useState<AttemptCode>("customer_unavailable");
-  const [attemptNote, setAttemptNote] = useState("");
-  const [kitGrade, setKitGrade] = useState<KitConditionGrade>("good");
-  const [kitScuff, setKitScuff] = useState(false);
-  const [kitDent, setKitDent] = useState(false);
-  const [kitMissing, setKitMissing] = useState(false);
-  const [kitNotes, setKitNotes] = useState("");
-  const task = state.tasks.find((t) => t.id === id);
+export default function JobDetailScreen() {
+  const { id: raw } = useLocalSearchParams<{ id: string | string[] }>();
+  const id = Array.isArray(raw) ? raw[0] : raw;
+  const app = useApp();
+  const tr = useT();
+  const l = useLayout();
+  useTick(30_000);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lateReason, setLateReason] = useState("");
 
-  if (!task) {
+  const reload = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    const res = await app.loadTask(id);
+    setLoading(false);
+    setError(res.ok ? null : res.message);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, app.loadTask]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload, app.online]);
+
+  const server = id ? app.task(id) : null;
+  if (!server) {
     return (
-      <View style={styles.wrap}>
-        <Muted>Task not found.</Muted>
+      <View style={{ flex: 1, backgroundColor: colors.bg, padding: space.lg }}>
+        {error ? <ErrorState message={error} onRetry={() => void reload()} retryLabel={tr("retry")} /> : <EmptyState icon={Clock} title={tr("loading")} />}
       </View>
     );
   }
 
-  const current = task;
+  const queued = app.pendingForTask(server.id);
+  const { task, pendingSteps } = projectTask(server, queued);
+  const step = nextStep(task, task.evidence);
+  const lang = app.language;
 
-  const you = live ?? task.store.geo;
-  const storeCustKm = haversineKm(task.store.geo, task.customerPlace.geo);
-  const youStore = haversineKm(you, task.store.geo);
-  const youCust = haversineKm(you, task.customerPlace.geo);
-  const checkIns = checkInProgress(task);
-  const checkInsDone = checkIns.done === checkIns.total;
-  const nextStage = nextCheckInStage(task);
-  const nextLeg =
-    nextStage === "store"
-      ? {
-          label: task.kind === "return" ? "Store (drop)" : "Store (pickup)",
-          place: task.store,
-          km: youStore,
+  const report = (r: ActionResult, okText?: string) => {
+    // A second tap on a step that is already queued is harmless: no dialog. Other local refusals (GPS, late
+    // reason, full queue) are explained, but never labelled as a server rejection.
+    if (!r.ok && r.code === "ALREADY_QUEUED") return;
+    if (!r.ok) showDialog(tr("actionBlocked"), errorText(lang, r.code, r.message));
+    else if (r.queued) showDialog(tr("pendingSync"), tr("queuedOffline"));
+    else if (okText) showDialog(okText);
+  };
+
+  const nextTaskId = app.home?.nextTask && app.home.nextTask.id !== task.id ? app.home.nextTask.id : null;
+  const offset = clockOffsetMs(server.serverTime);
+  const breached =
+    slaView(server.sla, offset, app.config?.rules.slaAtRiskMin ?? 45, Date.now(), server.state === "COMPLETED").status === "BREACHED";
+  const radius = app.config?.rules.checkInRadiusM ?? 150;
+  const distanceKm = app.live && task.stop ? haversineKm(app.live, task.stop) : null;
+
+  function primary() {
+    const map: Partial<Record<Step, () => ActionResult>> = {
+      START_ROUTE: () => app.enRoute(task.id),
+      ARRIVE: () => app.arrived(task.id),
+      CHECK_IN: () => app.checkIn(task.id),
+      START_WORK: () => app.startTask(task.id),
+      COMPLETE: () => {
+        if (breached && lateReason.trim().length < 5) {
+          return { ok: false, code: "LATE_REASON_REQUIRED", message: tr("lateReasonHint") };
         }
-      : {
-          label: task.kind === "return" ? "Customer (pickup)" : "Customer",
-          place: task.customerPlace,
-          km: youCust,
-        };
-
-  const photosOk = (checkpoint: string) => task.photos.some((p) => p.checkpoint === checkpoint);
-
-  function complete() {
-    if (current.status === "blocked") {
-      Alert.alert("Retry required", "Restart this stop after a failed attempt before marking it complete.");
+        return app.completeTask(task.id, breached ? lateReason.trim() : undefined);
+      },
+    };
+    if (step === "DONE" || step === "CANCELLED") {
+      // Next operational job (server-ordered on Home), else the job list.
+      if (nextTaskId) router.replace(`/(app)/tasks/${encodeURIComponent(nextTaskId)}`);
+      else backToJobs();
       return;
     }
-    const need = checkpoints(current.kind);
-    const missing = need.filter((c) => !photosOk(c));
-    if (missing.length) {
-      Alert.alert("Photos needed", `Add geotagged photos first: ${missing.join(", ")}`);
-      return;
-    }
-    if (checkIns.done < checkIns.total) {
-      Alert.alert(
-        "GPS check-in",
-        `Complete ${checkIns.total - checkIns.done} remaining route check-in${checkIns.total - checkIns.done === 1 ? "" : "s"} within ${Math.round(CHECK_IN_KM * 1000)} m.`,
-      );
-      return;
-    }
-    if (current.kind === "address_verification" && current.addressMatch === "unverified") {
-      Alert.alert("Address result", "Mark whether the site matches the booking.");
-      return;
-    }
-    if (current.kind === "vendor_visit") {
-      const visited = state.vendorVisits.some((v) => v.vendorId === current.vendorId);
-      if (!visited) {
-        Alert.alert("Visit proof", "Log the visit on the Onboard tab (interest + next meeting).");
-        return;
-      }
-      const intel = current.vendorIntel;
-      const skipIntel = current.vendorOutcome === "courtesy" || current.vendorOutcome === "not_interested" || current.vendorOutcome === "declined";
-      if (!skipIntel && (!intel?.gstin || !intel.decisionMaker || !intel.competitor || !intel.ownedKit || !intel.nextShootDate)) {
-        Alert.alert("Must-ask", "Complete vendor intel on the onboarding card before closing.");
-        return;
-      }
-    } else if ((current.kind === "delivery" || current.kind === "return") && !current.otpVerified) {
-      Alert.alert("Handover PIN", "Generate an in-app PIN and have the customer confirm it. No SMS.");
-      return;
-    }
-    if ((current.kind === "delivery" || current.kind === "return") && !current.signatureSvg) {
-      Alert.alert("Signature", "Capture a POD signature on this screen.");
-      return;
-    }
-    if (current.kind === "delivery" && !current.kitPickupCondition) {
-      Alert.alert("Kit condition", "Log pickup condition (good / scuff / dent / missing).");
-      return;
-    }
-    if (current.kind === "return" && !current.kitReturnCondition) {
-      Alert.alert("Kit condition", "Log return condition before closing.");
-      return;
-    }
-    if (current.kind === "inventory") {
-      const missing = current.items.filter(
-        (i) => {
-          const count = current.inventoryCounted?.[i.sku];
-          return count == null || !Number.isInteger(count) || count < 0;
-        },
-      );
-      if (missing.length) {
-        Alert.alert("Count required", "Enter a counted qty for every SKU on this bay.");
-        return;
-      }
-    } else if (current.items.length && (current.scannedSerials?.length ?? 0) < current.items.length) {
-      Alert.alert("Serials", "Match every kit serial before closing.");
-      return;
-    }
-    setTaskStatus(current.id, "completed", "Task completed with geotagged proof");
-    Alert.alert("Done", "Task closed.");
+    const run = map[step];
+    if (run) report(run());
   }
 
-  const photosNeed = checkpoints(task.kind);
-  const photosMissing = photosNeed.filter((c) => !photosOk(c));
-  const serialsDone = !task.items.length || task.kind === "inventory" || (task.scannedSerials?.length ?? 0) >= task.items.length;
-  const kitDone =
-    task.kind === "delivery"
-      ? !!task.kitPickupCondition
-      : task.kind === "return"
-        ? !!task.kitReturnCondition
-        : true;
-  const pinDone = task.kind !== "delivery" && task.kind !== "return" ? true : !!task.otpVerified;
-  const sigDone = task.kind !== "delivery" && task.kind !== "return" ? true : !!task.signatureSvg;
-  const steps = [
-    { label: `GPS check-in${checkIns.total > 1 ? `s (${checkIns.done}/${checkIns.total})` : ""}`, done: checkInsDone },
-    { label: "Geotagged photos", done: photosMissing.length === 0 },
-    { label: "Kit condition", done: kitDone },
-    { label: "Serials", done: serialsDone },
-    { label: "Handover PIN", done: pinDone },
-    { label: "POD signature", done: sigDone },
-  ].filter((s) => {
-    if (s.label === "Kit condition" && task.kind !== "delivery" && task.kind !== "return") return false;
-    if (s.label === "Serials" && (!task.items.length || task.kind === "inventory")) return false;
-    if ((s.label === "Handover PIN" || s.label === "POD signature") && task.kind !== "delivery" && task.kind !== "return")
-      return false;
-    return true;
-  });
-  const stepsLeft = steps.filter((s) => !s.done).length;
+  const stepList: { key: string; label: string; done: boolean }[] = [
+    { key: "check-in", label: tr("step_CHECK_IN"), done: ["CHECKED_IN", "IN_PROGRESS", "COMPLETED"].includes(task.state) },
+    ...(KIT_KINDS.has(task.kind)
+      ? [
+          { key: "verify-serial", label: tr("step_SERIALS"), done: task.items.length > 0 && task.items.every((i) => i.serialVerified) },
+          {
+            key: "kit-condition",
+            label: tr("step_KIT"),
+            done: task.items.length > 0 && task.items.every((i) => task.evidence.kitConditions.some((k) => k.itemId === i.itemId)),
+          },
+        ]
+      : []),
+    { key: "photos", label: tr("step_PHOTO"), done: task.evidence.photos.some((p) => p.attemptNo === task.attemptNo) },
+    ...(task.evidence.pinRequired ? [{ key: "pin", label: tr("step_PIN"), done: task.evidence.pin?.state === "VERIFIED" }] : []),
+    ...(task.evidence.podRequired ? [{ key: "pod", label: tr("step_POD"), done: Boolean(task.evidence.pod) }] : []),
+  ];
+  const firstOpen = stepList.find((s) => !s.done)?.key;
+
+  const active = ["CHECKED_IN", "IN_PROGRESS"].includes(task.state);
+  const closed = task.state === "COMPLETED" || task.state === "CANCELLED";
+  const failedItems = queued.filter((q) => q.status === "FAILED");
+  const primaryDisabled = ["SERIALS", "KIT", "PHOTO", "PIN", "POD"].includes(step) || (step === "COMPLETE" && pendingSteps.has("complete"));
+  const primaryLabel = pendingSteps.has("complete")
+    ? tr("pendingSync")
+    : step === "DONE" || step === "CANCELLED"
+      ? nextTaskId
+        ? tr("nextJob")
+        : tr("backToJobs")
+      : tr(`step_${step}` as I18nKey);
+  const why = primaryDisabled && !pendingSteps.has("complete") ? tr(`why_${step}` as I18nKey) : null;
+
+  const action = (
+    <>
+      {why ? <Text style={styles.why}>{why}</Text> : null}
+      <Button label={primaryLabel} disabled={primaryDisabled} onPress={primary} icon={step === "DONE" || step === "CANCELLED" ? ArrowRight : undefined} />
+    </>
+  );
+
+  const progress = <JobProgress state={task.state} step={step} />;
+
+  const checklist = !closed ? (
+    <Card>
+      <SectionHeader title={tr("checklist")} icon={ClipboardCheck} />
+      {stepList.map((s) => (
+        <StepRow key={s.key} label={`${s.label}${pendingSteps.has(s.key) ? ` · ${tr("pendingSync")}` : ""}`} done={s.done} current={s.key === firstOpen && active} />
+      ))}
+    </Card>
+  ) : null;
+
+  const main = (
+    <>
+      {failedItems.map((q) => (
+        <View key={q.id} style={styles.failBox} accessibilityRole="alert">
+          <Text style={styles.failTitle}>
+            {tr("rejected")} · {q.label}
+          </Text>
+          <Text style={styles.failText}>{errorText(lang, q.lastCode, q.lastError ?? "")}</Text>
+          <View style={styles.row}>
+            <Button compact flex={1} label={tr("retry")} variant="secondary" icon={RefreshCw} onPress={() => app.retryQueued(q.id)} />
+            <Button compact flex={1} label={tr("discard")} variant="ghost" onPress={() => app.discardQueued(q.id)} />
+          </View>
+        </View>
+      ))}
+
+      {/* Header */}
+      <View style={styles.head}>
+        <IconCircle icon={kindIcon(task.kind)} tone={closed ? "green" : "peach"} size={52} />
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <Text style={styles.title}>{task.title}</Text>
+          <Text style={styles.code}>{task.taskCode}</Text>
+          <View style={styles.badges}>
+            <KindBadge kind={task.kind} />
+            <StateBadge state={task.state} />
+            <SlaBadge sla={server.sla} serverTime={server.serverTime} completed={server.state === "COMPLETED"} />
+            {task.attemptNo > 1 ? <Badge label={tr("attempt", { n: task.attemptNo })} tone="violet" /> : null}
+            {pendingSteps.size ? <Badge label={tr("pendingSync")} tone="blue" dot /> : null}
+          </View>
+        </View>
+      </View>
+
+      {task.state === "COMPLETED" ? (
+        <Card tone="success">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: space.md }}>
+            <CircleCheck size={28} color={colors.successInk} />
+            <View style={{ flex: 1 }}>
+              <Text style={[type.heading, { color: colors.successInk }]}>{tr("jobCompletedTitle")}</Text>
+              <Text style={type.meta}>{nextTaskId ? tr("jobCompletedNext") : tr("jobCompletedNone")}</Text>
+            </View>
+          </View>
+        </Card>
+      ) : null}
+
+      {/* Main column at every width: compact on phones, the full stepper where it fits. */}
+      {progress}
+
+      {!closed ? <GpsLine /> : null}
+
+      {/* Stop + location verification */}
+      <Card>
+        <View style={{ flexDirection: "row", gap: space.md, alignItems: "flex-start" }}>
+          <IconCircle icon={MapPin} tone="slate" size={36} />
+          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+            <Text style={type.heading}>{task.stop?.name ?? task.customerName}</Text>
+            <Text style={type.meta}>
+              {task.stop?.type ? `${tr(`stop_${task.stop.type}` as I18nKey)} · ` : ""}
+              {task.stop?.address ?? task.area ?? ""}
+            </Text>
+          </View>
+        </View>
+        {task.evidence.checkIn ? (
+          <Badge label={tr("evidenceCheckIn", { d: task.evidence.checkIn.distanceM })} tone="green" icon={CircleCheck} />
+        ) : distanceKm !== null && !closed ? (
+          <Badge
+            label={tr("distanceToStop", { d: formatKm(distanceKm), r: radius })}
+            tone={distanceKm * 1000 <= radius ? "green" : "amber"}
+            icon={MapPin}
+          />
+        ) : null}
+        <View style={styles.row}>
+          {!closed ? <NavigateButton flex={1} dest={task.stop ? { ...task.stop, address: task.stop.address ?? task.area } : { address: task.area }} /> : null}
+          {task.customerPhone ? (
+            <Button flex={1} label={tr("callCustomer")} variant="ghost" onPress={() => void Linking.openURL(`tel:${task.customerPhone}`)} />
+          ) : null}
+        </View>
+        {task.notes ? <Text style={type.meta}>{task.notes}</Text> : null}
+      </Card>
+
+      {!l.twoCol ? checklist : null}
+
+      {KIT_KINDS.has(task.kind) && task.items.length ? <KitSection task={task} enabled={active} report={report} /> : null}
+
+      {active ? <PhotoSection task={task} report={report} /> : <PhotoList task={task} />}
+
+      {task.evidence.pinRequired && active ? <PinSection task={server} /> : null}
+
+      {task.evidence.podRequired && active && !task.evidence.pod && task.evidence.pin?.state === "VERIFIED" ? (
+        <PodSection task={task} report={report} />
+      ) : null}
+      {task.evidence.pod?.signatureUrl ? (
+        <Card>
+          <SectionHeader title={tr("signatureSaved")} icon={PenLine} />
+          <Text style={type.meta}>{task.evidence.pod.recipientName}</Text>
+          <Image source={{ uri: mediaUrl(task.evidence.pod.signatureUrl)! }} style={styles.signature} resizeMode="contain" />
+        </Card>
+      ) : null}
+
+      {step === "COMPLETE" && breached ? (
+        <Card tone="warning">
+          <Text style={type.heading}>{tr("lateReason")}</Text>
+          <Text style={type.meta}>{tr("lateReasonHint")}</Text>
+          <Field label={tr("lateReason")} value={lateReason} onChangeText={setLateReason} multiline />
+        </Card>
+      ) : null}
+
+      {step === "RETRY" ? <RetrySection task={task} report={report} /> : null}
+      {["EN_ROUTE", "ARRIVED", "CHECKED_IN", "IN_PROGRESS", "ASSIGNED", "RETRY"].includes(task.state) ? (
+        <FailSection task={task} report={report} />
+      ) : null}
+
+      {task.evidence.failures.length ? (
+        <Card tone="muted">
+          <Text style={type.heading}>{tr("failAttempt")}</Text>
+          {task.evidence.failures.map((f) => (
+            <Text key={f.at} style={type.meta}>
+              {tr("attempt", { n: f.attemptNo })} · {tr(`failure_${f.code}` as I18nKey)}
+              {f.notes ? ` · ${f.notes}` : ""}
+            </Text>
+          ))}
+        </Card>
+      ) : null}
+
+      <Card tone="muted">
+        <SectionHeader title={tr("timeline")} icon={Clock} />
+        {server.timeline.map((e) => (
+          <View key={e.id} style={styles.event}>
+            <View style={styles.eventDot} />
+            <View style={{ flex: 1 }}>
+              <Text style={[type.body, { fontSize: 14 }]}>{e.label}</Text>
+              <Text style={type.caption}>{new Date(e.at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</Text>
+            </View>
+          </View>
+        ))}
+      </Card>
+    </>
+  );
 
   return (
-    <ScrollView contentContainerStyle={styles.wrap}>
-      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-        <KindBadge kind={task.kind} />
-        <StatusBadge status={task.status} />
-        <SlaBadge task={task} />
-      </View>
-      <Text style={styles.title}>{task.title}</Text>
-      <Muted>
-        {task.bookingRef}
-        {task.beatSeq ? ` · beat ${task.beatSeq}` : ""}
-        {task.beatWindow ? ` · ${task.beatWindow}` : ""} · due {formatWhen(task.scheduledFor)}
-      </Muted>
-
-      {task.status !== "completed" ? (
-        <Card>
-          <Text style={styles.h}>Close-out · {stepsLeft === 0 ? "ready" : `${stepsLeft} left`}</Text>
-          {steps.map((s) => (
-            <StepRow key={s.label} label={s.label} done={s.done} />
-          ))}
-        </Card>
-      ) : null}
-
-      <MiniMap
-        height={140}
-        markers={[
-          { id: "you", label: "You", color: colors.primary, point: you },
-          { id: "store", label: "Store", color: colors.orange, point: task.store.geo },
-          { id: "cust", label: "Customer", color: colors.success, point: task.customerPlace.geo },
-        ]}
-      />
-
-      <Card>
-        <Text style={styles.h}>Navigate</Text>
-        <Text style={styles.distLine}>
-          Store ↔ customer {formatKm(storeCustKm)} · you → {nextLeg.label} {formatKm(nextLeg.km)}
-        </Text>
-        <Button
-          label={`Maps · ${nextLeg.label}`}
-          variant="outline"
-          onPress={() => void Linking.openURL(mapsDirUrl(you, nextLeg.place.geo))}
-        />
-      </Card>
-
-      <Card>
-        <Text style={styles.h}>Outlet GPS check-in</Text>
-        <Muted>
-          Live GPS at the stop — not the storefront photo. Stay within {Math.round(CHECK_IN_KM * 1000)} m of{" "}
-          {nextStage === "store" ? task.store.area : task.customerPlace.area}.
-        </Muted>
-        {checkInsDone ? (
-          <View style={styles.okBox}>
-            <Text style={styles.okTxt}>
-              GPS check-in{checkIns.total > 1 ? "s" : ""} complete · {checkIns.done}/{checkIns.total}
-            </Text>
-          </View>
-        ) : (
-          <>
-            {checkIns.done > 0 ? <Muted>{checkIns.done}/{checkIns.total} route check-ins complete.</Muted> : null}
-            <Button
-              label={`Check in at ${nextStage === "store" ? "store" : "customer"} with GPS`}
-              onPress={() => {
-                const err = checkInTask(task.id);
-                if (err) Alert.alert("Check-in blocked", err);
-              }}
-            />
-          </>
-        )}
-        {live ? (
-          <Muted>
-            You are {formatKm(haversineKm(live, checkInTarget(task)))} from the stop
-            {live.source === "gps" ? " · device GPS" : " · simulated pin"}
-          </Muted>
-        ) : (
-          <Muted>Waiting for a GPS fix. Pick a customer pin on Home if you are demoing.</Muted>
-        )}
-      </Card>
-
-      {task.kind === "delivery" || task.kind === "return" ? (
-        <Card>
-          <Text style={styles.h}>{task.kind === "delivery" ? "Kit condition · pickup" : "Kit condition · return"}</Text>
-          <Muted>Good / scuff / dent / missing parts before the bag leaves or returns.</Muted>
-          <ChipWrap>
-            {KIT_GRADES.map((g) => (
-              <Chip key={g.id} label={g.label} selected={kitGrade === g.id} onPress={() => setKitGrade(g.id)} />
-            ))}
-          </ChipWrap>
-          <CheckRow label="Scuff" checked={kitScuff} onToggle={() => setKitScuff((v) => !v)} />
-          <CheckRow label="Dent" checked={kitDent} onToggle={() => setKitDent((v) => !v)} />
-          <CheckRow label="Missing parts" checked={kitMissing} onToggle={() => setKitMissing((v) => !v)} />
-          <TextInput
-            nativeID={`kit-notes-${task.id}`}
-            accessibilityLabel="Kit condition notes"
-            value={kitNotes}
-            onChangeText={setKitNotes}
-            placeholder="Bag notes"
-            style={styles.qty}
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: l.pad, paddingTop: space.lg, paddingBottom: l.twoCol ? space.xxl : 170 }}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={reload} />}
+      >
+        <View style={{ width: "100%", maxWidth: l.maxWidth, alignSelf: "center" }}>
+          <Columns
+            main={main}
+            side={
+              /* Desktop/tablet only: phones show the checklist inline and the action in the sticky footer. */
+              l.twoCol ? (
+                <>
+                  {checklist}
+                  <Card elevated>{action}</Card>
+                </>
+              ) : null
+            }
           />
-          <Button
-            label="Save kit condition"
-            onPress={() => {
-              const row: KitCondition = {
-                overall: kitGrade,
-                scuff: kitScuff || kitGrade === "scuff",
-                dent: kitDent || kitGrade === "dent",
-                missingParts: kitMissing || kitGrade === "missing",
-                notes: kitNotes.trim(),
-              };
-              saveKitCondition(task.id, task.kind === "return" ? "return" : "pickup", row);
-              Alert.alert("Saved", "Kit condition logged on this job.");
-            }}
-          />
-          {(task.kitPickupCondition || task.kitReturnCondition) ? (
-            <Muted>
-              Logged: {(task.kind === "return" ? task.kitReturnCondition : task.kitPickupCondition)?.overall}
-            </Muted>
-          ) : null}
-        </Card>
-      ) : null}
+        </View>
+      </ScrollView>
 
-      {task.status !== "completed" ? (
-        <Card>
-          <Text style={styles.h}>Failed attempt</Text>
-          <Muted>NSZ, customer unavailable, kit refused, weather, vehicle, address — then retry.</Muted>
-          <ChipWrap>
-            {(Object.keys(ATTEMPT_LABELS) as AttemptCode[]).map((code) => (
-              <Chip
-                key={code}
-                label={ATTEMPT_LABELS[code]}
-                selected={attemptCode === code}
-                tone={code === "nsz" || code === "kit_refused" ? "danger" : "default"}
-                onPress={() => setAttemptCode(code)}
-              />
-            ))}
-          </ChipWrap>
-          <TextInput
-            nativeID={`attempt-note-${task.id}`}
-            accessibilityLabel="Failed attempt details"
-            value={attemptNote}
-            onChangeText={setAttemptNote}
-            placeholder="What happened on this try?"
-            style={styles.qty}
-          />
-          <Button
-            label="Log failed attempt"
-            variant="danger"
-            onPress={() => {
-              logAttempt(task.id, attemptCode, attemptNote.trim());
-              setAttemptNote("");
-            }}
-          />
-          {task.status === "blocked" ? (
-            <Button
-              label="Retry this stop"
-              onPress={() => setTaskStatus(task.id, "in_progress", "Retry after failed attempt")}
-            />
-          ) : null}
-          {(task.attempts ?? []).map((a) => (
-            <Muted key={a.at}>
-              {formatWhen(a.at)} · {ATTEMPT_LABELS[a.code]}
-              {a.note ? ` · ${a.note}` : ""}
-            </Muted>
-          ))}
-        </Card>
-      ) : null}
+      {/* Phones: sticky primary action */}
+      {!l.twoCol ? <StickyFooter>{action}</StickyFooter> : null}
+    </View>
+  );
+}
 
-      <Card>
-        <Text style={styles.h}>Rental store</Text>
-        <Muted>
-          {task.store.name} · {task.store.address}
-        </Muted>
-        {task.store.phone ? (
-          <Pressable onPress={() => void Linking.openURL(`tel:${task.store.phone!.replace(/\s/g, "")}`)}>
-            <Text style={styles.link}>{task.store.phone}</Text>
-          </Pressable>
-        ) : null}
-        <Text style={styles.h}>Customer</Text>
-        <Muted>
-          {task.customerPlace.name} · {task.customerPlace.address}
-        </Muted>
-        <Pressable onPress={() => void Linking.openURL(`tel:${task.customerPhone.replace(/\s/g, "")}`)}>
-          <Text style={styles.link}>{task.customerPhone}</Text>
-        </Pressable>
-        <Muted>{task.notes}</Muted>
-      </Card>
-
-      {task.items.length > 0 ? (
-        <Card>
-          <Text style={styles.h}>Equipment</Text>
-          {task.items.map((item) => (
-            <View key={item.serial} style={styles.item}>
-              <Text style={{ fontWeight: "600" }}>
-                {item.name} × {item.qty}
-              </Text>
-              <Muted>
-                {item.sku} · {item.serial} · {item.condition}
-              </Muted>
-              {task.kind === "inventory" ? (
-                <TextInput
-                  nativeID={`inventory-count-${task.id}-${item.sku}`}
-                  accessibilityLabel={`Counted quantity for ${item.name}`}
-                  keyboardType="number-pad"
-                  placeholder="Counted qty"
-                  value={
-                    task.inventoryCounted?.[item.sku] != null &&
-                    !Number.isNaN(task.inventoryCounted[item.sku])
-                      ? String(task.inventoryCounted[item.sku])
-                      : ""
-                  }
-                  onChangeText={(v) => {
-                    const value = v.trim() === "" ? Number.NaN : Number(v);
-                    updateTask(task.id, {
-                      inventoryCounted: { ...task.inventoryCounted, [item.sku]: value },
-                    });
-                  }}
-                  style={styles.qty}
-                />
+/** Visual progress: route → arrived → check-in → work → proof → complete. Current step highlighted. */
+function JobProgress({ state, step }: { state: string; step: Step }) {
+  const tr = useT();
+  const stages = [tr("stage_route"), tr("stage_arrived"), tr("stage_checkin"), tr("stage_work"), tr("stage_proof"), tr("stage_complete")];
+  const current =
+    state === "COMPLETED"
+      ? stages.length
+      : state === "EN_ROUTE"
+        ? 1
+        : state === "ARRIVED"
+          ? 2
+          : state === "CHECKED_IN"
+            ? 3
+            : state === "IN_PROGRESS"
+              ? step === "COMPLETE"
+                ? 5
+                : 4
+              : 0;
+  // Every label only fits when each stage gets ~64 px; otherwise name just the current stage.
+  const [width, setWidth] = useState(0);
+  const compact = width > 0 && width / stages.length < 64;
+  return (
+    <Card padding={space.md}>
+      <View
+        style={styles.progress}
+        onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+        accessibilityRole="progressbar"
+        accessibilityLabel={stages[Math.min(current, stages.length - 1)]}
+        accessibilityValue={{ min: 0, max: stages.length, now: current }}
+      >
+        {stages.map((label, i) => {
+          const done = i < current;
+          const now = i === current;
+          return (
+            <View key={label} style={styles.stage}>
+              <View style={styles.stageTrack}>
+                <View style={[styles.stageBar, done && { backgroundColor: colors.success }, now && { backgroundColor: colors.primary }]} />
+              </View>
+              {!compact ? (
+                <Text style={[styles.stageLabel, done && { color: colors.successInk }, now && { color: colors.primaryDark, fontWeight: "800" }]} numberOfLines={2}>
+                  {label}
+                </Text>
               ) : null}
             </View>
-          ))}
-        </Card>
+          );
+        })}
+      </View>
+      {compact ? (
+        <Text style={[type.caption, { color: current >= stages.length ? colors.successInk : colors.primaryDark, fontWeight: "800" }]}>
+          {Math.min(current + 1, stages.length)}/{stages.length} · {stages[Math.min(current, stages.length - 1)]}
+        </Text>
       ) : null}
+    </Card>
+  );
+}
 
-      {task.kind === "address_verification" ? (
-        <Card>
-          <Text style={styles.h}>Address result</Text>
-          <ChipWrap>
-            <Chip
-              label="Matches booking"
-              selected={task.addressMatch === "match"}
-              onPress={() => updateTask(task.id, { addressMatch: "match" })}
-            />
-            <Chip
-              label="Does not match"
-              selected={task.addressMatch === "mismatch"}
-              tone="danger"
-              onPress={() => updateTask(task.id, { addressMatch: "mismatch" })}
-            />
-          </ChipWrap>
-        </Card>
-      ) : null}
+type Report = (r: ActionResult, okText?: string) => void;
 
-      {task.kind === "vendor_visit" && task.vendorId ? (
-        <Card>
-          <Text style={styles.h}>Vendor onboarding</Text>
-          <Muted>Market Camartes and onboard this partner onto the platform.</Muted>
-          <Button label="Open vendor card" onPress={() => router.push(`/(app)/vendors/${task.vendorId}`)} />
-        </Card>
-      ) : null}
-
-      {task.kind === "delivery" || task.kind === "return" ? (
-        <Card>
-          <Text style={styles.h}>{t(lang, "otp")}</Text>
-          {task.otpVerified ? (
-            <Muted>In-app PIN confirmed. Handover is locked on this booking.</Muted>
-          ) : (
-            <>
-              <Muted>
-                Create the 4-digit PIN in this app and show it to the customer. It expires after 15 minutes. Do not send it by SMS.
-              </Muted>
-              {task.otpCode && task.otpGeneratedAt ? (
-                pinStep === "show" ? (
-                  <>
-                    <Text style={styles.pin}>{task.otpCode}</Text>
-                    <Muted>Show this number to the customer, then hide it before they type.</Muted>
-                    <Button label="Customer will type PIN" onPress={() => setPinStep("enter")} />
-                    <Button
-                      label="Generate new PIN"
-                      variant="outline"
-                      onPress={() => {
-                        generateOtp(task.id);
-                        setOtp("");
-                        setPinStep("show");
-                      }}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <Muted>PIN is hidden. Customer types the 4 digits they just saw.</Muted>
-                    <TextInput
-                      nativeID={`handover-pin-${task.id}`}
-                      accessibilityLabel="Customer handover PIN"
-                      value={otp}
-                      onChangeText={setOtp}
-                      placeholder="Customer types PIN"
-                      keyboardType="number-pad"
-                      maxLength={4}
-                      style={styles.qty}
-                      secureTextEntry
-                    />
-                    <Button
-                      label={t(lang, "verifyOtp")}
-                      onPress={() => {
-                        if (!verifyOtp(task.id, otp)) {
-                          Alert.alert("Wrong or expired PIN", "Enter the latest PIN shown, or generate a new one.");
-                        }
-                        else setOtp("");
-                      }}
-                    />
-                    <Button label="Show PIN again" variant="ghost" onPress={() => setPinStep("show")} />
-                  </>
-                )
-              ) : (
-                <Button
-                  label="Generate handover PIN"
-                  onPress={() => {
-                    generateOtp(task.id);
-                    setOtp("");
-                    setPinStep("show");
-                  }}
-                />
-              )}
-            </>
-          )}
-          <Muted>Customer confirmation is recorded only after the handover PIN is verified.</Muted>
-          <Button label="WhatsApp ETA" variant="outline" onPress={() => sendWhatsApp(task.id, "eta")} />
-          <Button
-            label={task.kind === "return" ? "WhatsApp collected" : "WhatsApp delivered"}
-            variant="ghost"
-            onPress={() => sendWhatsApp(task.id, task.kind === "return" ? "collected" : "delivered")}
-          />
-        </Card>
-      ) : null}
-
-      {task.kind === "delivery" || task.kind === "return" ? (
-        <Card>
-          <Text style={styles.h}>POD signature</Text>
-          <Muted>Customer signs here. PIN still required — this is the paper trail, not a substitute.</Muted>
-          <SignaturePad value={task.signatureSvg} onChange={(svg) => saveSignature(task.id, svg)} />
-          {task.signatureSvg ? <Muted>Signature captured.</Muted> : <Muted>Draw with a finger or mouse.</Muted>}
-        </Card>
-      ) : null}
-
-      {task.items.length > 0 && task.kind !== "inventory" ? (
-        <Card>
-          <Text style={styles.h}>{t(lang, "serials")}</Text>
-          <Muted>
-            {(task.scannedSerials?.length ?? 0)}/{task.items.length} kits confirmed
-          </Muted>
-          {task.items.map((item) => (
-            <Text key={item.serial} style={{ fontWeight: "600" }}>
-              {(task.scannedSerials ?? []).includes(item.serial) ? "✓" : "○"} {item.name} · {item.serial}
-            </Text>
-          ))}
-          <TextInput
-            nativeID={`serial-${task.id}`}
-            accessibilityLabel="Equipment serial number"
-            value={serial}
-            onChangeText={setSerial}
-            placeholder="Full serial or last 4 digits"
-            style={styles.qty}
-          />
-          <Button
-            label={t(lang, "scanSerial")}
-            variant="outline"
-            onPress={() => {
-              if (!matchSerial(task.id, serial)) Alert.alert("No match", "Use the full serial or the last 4 characters.");
-              else setSerial("");
-            }}
-          />
-        </Card>
-      ) : null}
-
-      {task.status !== "completed" ? (
-        <Card>
-          <Text style={styles.h}>{t(lang, "damage")}</Text>
-          <TextInput
-            nativeID={`damage-note-${task.id}`}
-            accessibilityLabel="Damage or exception details"
-            value={dmg}
-            onChangeText={setDmg}
-            placeholder="What happened?"
-            style={styles.qty}
-          />
-          <Button
-            label="Log exception"
-            variant="ghost"
-            onPress={() => {
-              addDamage({
-                taskId: task.id,
-                serial: serial || task.items[0]?.serial || "kit",
-                note: dmg.trim() || "Kit flagged on site",
-              });
-              setDmg("");
-              Alert.alert("Logged", "Hub will review the exception.");
-            }}
-          />
-          {state.damages
-            .filter((d) => d.taskId === task.id)
-            .map((d) => (
-              <Muted key={d.id}>
-                {d.serial} · {d.note}
-              </Muted>
-            ))}
-        </Card>
-      ) : null}
-
-      <Card>
-        <Text style={styles.h}>Geotagged photos</Text>
-        {checkpoints(task.kind).map((cp) => (
-          <View key={cp} style={styles.item}>
-            <Text style={{ fontWeight: "600" }}>{cp}</Text>
-            <GeoCamera taskId={task.id} checkpoint={cp} />
-          </View>
-        ))}
-        {task.photos.map((p) => (
-          <View key={p.id} style={styles.item}>
-            <Image source={{ uri: p.uri }} style={{ height: 180, borderRadius: 8 }} />
+function KitSection({ task, enabled, report }: { task: TaskDetail; enabled: boolean; report: Report }) {
+  const app = useApp();
+  const tr = useT();
+  const [last4, setLast4] = useState<Record<string, string>>({});
+  const [grade, setGrade] = useState<Record<string, KitGrade>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [photos, setPhotos] = useState<Record<string, CapturedImage[]>>({});
+  return (
+    <Card>
+      <Text style={styles.h}>{tr("kitOnTask")}</Text>
+      {task.items.map((item) => {
+        const graded = task.evidence.kitConditions.find((k) => k.itemId === item.itemId);
+        const g = grade[item.itemId] ?? "GOOD";
+        return (
+          <View key={item.itemId} style={styles.item}>
+            <Text style={styles.itemName}>{item.name}</Text>
             <Muted>
-              {p.checkpoint} · {formatCoord(p.geo.lat, 6)}, {formatCoord(p.geo.lng, 6)} ±{Math.round(p.geo.accuracyM)}m
+              {item.sku} · {item.serial}
             </Muted>
-            <Muted>{new Date(p.geo.capturedAt).toLocaleString()}</Muted>
-            {p.note ? <Muted>Note: {p.note}</Muted> : null}
+            {item.serialVerified ? (
+              <Badge label={tr("serialOk")} tone="green" />
+            ) : enabled ? (
+              <>
+                <Muted>{tr("serialHint")}</Muted>
+                <View style={styles.row}>
+                  <TextInput
+                    accessibilityLabel={tr("last4")}
+                    value={last4[item.itemId] ?? ""}
+                    onChangeText={(v) => setLast4((s) => ({ ...s, [item.itemId]: v.replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() }))}
+                    placeholder={tr("last4")}
+                    autoCapitalize="characters"
+                    maxLength={4}
+                    style={[styles.input, { flex: 1, letterSpacing: 6, fontSize: 20 }]}
+                  />
+                  <Button
+                    flex={1}
+                    label={tr("matchSerial")}
+                    disabled={(last4[item.itemId] ?? "").length !== 4}
+                    onPress={() => report(app.verifySerial(task.id, item.itemId, last4[item.itemId]!))}
+                  />
+                </View>
+              </>
+            ) : null}
+            {graded ? (
+              <Badge label={`${tr("condition")}: ${tr(`grade_${graded.grade}` as I18nKey)}`} tone={graded.grade === "GOOD" ? "green" : "red"} />
+            ) : enabled && item.serialVerified ? (
+              <>
+                <Text style={styles.sub}>{tr("condition")}</Text>
+                <ChipWrap>
+                  {GRADES.map((gr) => (
+                    <Chip
+                      key={gr}
+                      label={tr(`grade_${gr}` as I18nKey)}
+                      selected={g === gr}
+                      tone={gr === "GOOD" ? "default" : "danger"}
+                      onPress={() => setGrade((s) => ({ ...s, [item.itemId]: gr }))}
+                    />
+                  ))}
+                </ChipWrap>
+                {g !== "GOOD" ? (
+                  <>
+                    <Field
+                      label={tr("damageNotes")}
+                      value={notes[item.itemId] ?? ""}
+                      onChangeText={(v) => setNotes((s) => ({ ...s, [item.itemId]: v }))}
+                      multiline
+                    />
+                    <GeoCamera
+                      label={tr("damagePhoto")}
+                      onCaptured={(img) => setPhotos((s) => ({ ...s, [item.itemId]: [...(s[item.itemId] ?? []), img] }))}
+                    />
+                  </>
+                ) : null}
+                <Button
+                  label={tr("saveCondition")}
+                  disabled={g !== "GOOD" && ((notes[item.itemId] ?? "").trim().length < 3 || !(photos[item.itemId] ?? []).length)}
+                  onPress={() => report(app.recordKit(task.id, item.itemId, g, notes[item.itemId] ?? "", photos[item.itemId] ?? []))}
+                />
+              </>
+            ) : null}
           </View>
-        ))}
-      </Card>
+        );
+      })}
+    </Card>
+  );
+}
 
+function PhotoList({ task }: { task: TaskDetail }) {
+  const tr = useT();
+  const shown = task.evidence.photos.filter((p) => p.url);
+  if (!shown.length) return null;
+  return (
+    <Card accent={false}>
+      <Text style={styles.h}>{tr("photos")}</Text>
+      <View style={styles.thumbs}>
+        {shown.map((p) => (
+          <Image key={p.id} source={{ uri: mediaUrl(p.url)! }} style={styles.thumb} />
+        ))}
+      </View>
+    </Card>
+  );
+}
+
+function PhotoSection({ task, report }: { task: TaskDetail; report: Report }) {
+  const app = useApp();
+  const tr = useT();
+  const [checkpoint, setCheckpoint] = useState("");
+  const current = task.evidence.photos.filter((p) => p.attemptNo === task.attemptNo);
+  return (
+    <Card>
+      <Text style={styles.h}>{tr("photos")}</Text>
+      <Field label={tr("checkpoint")} value={checkpoint} onChangeText={setCheckpoint} />
+      <GeoCamera
+        label={tr("addPhoto")}
+        onCaptured={(img) => {
+          report(app.addPhoto(task.id, checkpoint.trim() || tr(`kind_${task.kind}` as I18nKey), img));
+          setCheckpoint("");
+        }}
+      />
+      <View style={styles.thumbs}>
+        {current.map((p) =>
+          p.url ? (
+            <Image key={p.id} source={{ uri: mediaUrl(p.url)! }} style={styles.thumb} />
+          ) : (
+            <View key={p.id} style={[styles.thumb, styles.pendingThumb]}>
+              <Text style={styles.pendingText}>{tr("pendingSync")}</Text>
+            </View>
+          ),
+        )}
+      </View>
+    </Card>
+  );
+}
+
+function PinSection({ task }: { task: TaskDetail }) {
+  const app = useApp();
+  const tr = useT();
+  // value is present only for IN_APP delivery; with WhatsApp the app never sees the PIN.
+  const [pin, setPin] = useState<{ value?: string; sentTo?: string; expiresAt: string } | null>(null);
+  const [mode, setMode] = useState<"show" | "enter">("show");
+  const [entry, setEntry] = useState("");
+  const [busy, setBusy] = useState(false);
+  const state = task.evidence.pin?.state;
+
+  if (state === "VERIFIED") {
+    return (
       <Card>
-        <Text style={styles.h}>Timeline</Text>
-        {task.timeline.map((ev) => (
-          <Muted key={ev.id}>
-            {formatWhen(ev.at)} · {ev.label}
-          </Muted>
-        ))}
+        <Text style={styles.h}>{tr("pinTitle")}</Text>
+        <Badge label={tr("pinVerified")} tone="green" />
       </Card>
+    );
+  }
 
-      {task.status === "assigned" ? (
-        <Button
-          label="Start task"
-          onPress={() => setTaskStatus(task.id, "in_progress", "Started — travelling to first stop")}
-        />
+  async function generate() {
+    if (!app.online) return showDialog(tr("pinTitle"), tr("pinNeedsConnection"));
+    setBusy(true);
+    const res = await app.generatePin(task.id);
+    setBusy(false);
+    if (!res.ok) return showDialog(tr("pinTitle"), errorText(app.language, res.code, res.message));
+    setPin({ value: res.body.pin, sentTo: res.body.sentTo, expiresAt: res.body.expiresAt });
+    setMode(res.body.pin ? "show" : "enter");
+    setEntry("");
+  }
+
+  async function verify() {
+    if (!app.online) return showDialog(tr("pinTitle"), tr("pinNeedsConnection"));
+    setBusy(true);
+    const res = await app.verifyPin(task.id, entry);
+    setBusy(false);
+    setEntry("");
+    if (!res.ok) return showDialog(tr("pinTitle"), errorText(app.language, res.code, res.message));
+    if (res.body.verified) {
+      setPin(null);
+      showDialog(tr("pinVerified"));
+    } else {
+      showDialog(tr("pinTitle"), tr("pinWrong", { n: res.body.attemptsLeft ?? 0 }));
+    }
+  }
+
+  return (
+    <Card>
+      <Text style={styles.h}>{tr("pinTitle")}</Text>
+      {pin?.sentTo || (!pin && task.evidence.pinDelivery === "WHATSAPP" && state === "ACTIVE") ? (
+        <Muted>{tr("pinSentWhatsApp", { to: pin?.sentTo ?? "" })}</Muted>
       ) : null}
-      {task.status !== "completed" ? (
-        <Button
-          label={stepsLeft ? `Mark complete · ${stepsLeft} left` : "Mark complete"}
-          variant={task.status === "assigned" ? "outline" : "primary"}
-          disabled={task.status === "blocked"}
-          onPress={complete}
-        />
+      {!pin && !(task.evidence.pinDelivery === "WHATSAPP" && state === "ACTIVE") ? (
+        <Button label={busy ? tr("saving") : tr("pinGenerate")} disabled={busy} onPress={() => void generate()} />
+      ) : mode === "show" && pin?.value ? (
+        <>
+          <Text style={styles.pin}>{pin.value}</Text>
+          <Muted>{tr("pinShow")}</Muted>
+          <Muted>{tr("pinExpires", { time: new Date(pin.expiresAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) })}</Muted>
+          <Button label={tr("pinCustomerTypes")} onPress={() => setMode("enter")} />
+        </>
       ) : (
-        <Muted>Closed {task.completedAt ? formatWhen(task.completedAt) : ""}</Muted>
+        <>
+          <Muted>{tr("pinEnter")}</Muted>
+          <TextInput
+            accessibilityLabel={tr("pinEnter")}
+            value={entry}
+            onChangeText={(v) => setEntry(v.replace(/\D/g, "").slice(0, 4))}
+            keyboardType="number-pad"
+            secureTextEntry
+            maxLength={4}
+            style={[styles.input, styles.pinInput]}
+          />
+          <Button label={tr("pinVerify")} disabled={entry.length !== 4 || busy} onPress={() => void verify()} />
+          <Button label={tr("pinGenerate")} variant="ghost" disabled={busy} onPress={() => void generate()} />
+        </>
       )}
-    </ScrollView>
+    </Card>
+  );
+}
+
+function PodSection({ task, report }: { task: TaskDetail; report: Report }) {
+  const app = useApp();
+  const tr = useT();
+  const [recipient, setRecipient] = useState(task.customerName ?? "");
+  const [sig, setSig] = useState<{ strokes: Pt[][]; w: number; h: number } | null>(null);
+  const png = sig ? signatureDataUri(sig.strokes, sig.w, sig.h) : null;
+  return (
+    <Card>
+      <Text style={styles.h}>{tr("podTitle")}</Text>
+      <Field label={tr("recipientName")} value={recipient} onChangeText={setRecipient} />
+      <SignaturePad
+        hint={tr("signHere")}
+        clearLabel={tr("clearSignature")}
+        onChange={(strokes, size) => setSig({ strokes, w: size.w, h: size.h })}
+      />
+      <Button
+        label={tr("saveSignature")}
+        disabled={!png || recipient.trim().length < 2}
+        onPress={() => report(app.capturePod(task.id, recipient.trim(), png!))}
+      />
+    </Card>
+  );
+}
+
+function FailSection({ task, report }: { task: TaskDetail; report: Report }) {
+  const app = useApp();
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState<FailureCode | null>(null);
+  const [notes, setNotes] = useState("");
+  const [photos, setPhotos] = useState<CapturedImage[]>([]);
+  const codes: FailureCode[] = (app.config?.failureCodes.map((f) => f.code) as FailureCode[] | undefined) ?? [
+    "NSZ",
+    "CUSTOMER_UNAVAILABLE",
+    "KIT_REFUSED",
+    "WEATHER",
+    "VEHICLE",
+    "ADDRESS",
+  ];
+  if (!open) return <Button label={tr("failAttempt")} variant="danger" onPress={() => setOpen(true)} />;
+  return (
+    <Card>
+      <Text style={styles.h}>{tr("failAttempt")}</Text>
+      <Text style={styles.sub}>{tr("failReason")}</Text>
+      <ChipWrap>
+        {codes.map((c) => (
+          <Chip key={c} label={tr(`failure_${c}` as I18nKey)} tone="danger" selected={code === c} onPress={() => setCode(c)} />
+        ))}
+      </ChipWrap>
+      <Field label={tr("failNotes")} value={notes} onChangeText={setNotes} multiline />
+      <GeoCamera label={tr("addPhoto")} onCaptured={(img) => setPhotos((p) => [...p, img])} />
+      <Button
+        label={tr("failSubmit")}
+        variant="danger"
+        disabled={!code}
+        onPress={() => {
+          report(app.failTask(task.id, code!, notes.trim(), photos));
+          setOpen(false);
+        }}
+      />
+    </Card>
+  );
+}
+
+function RetrySection({ task, report }: { task: TaskDetail; report: Report }) {
+  const app = useApp();
+  const tr = useT();
+  const [reason, setReason] = useState("");
+  return (
+    <Card>
+      <Text style={styles.h}>{tr("step_RETRY")}</Text>
+      <Field label={tr("retryReason")} value={reason} onChangeText={setReason} />
+      <Button label={tr("step_RETRY")} onPress={() => report(app.retryTask(task.id, reason.trim()))} />
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 12, backgroundColor: colors.bg, paddingBottom: 48 },
-  title: { fontSize: 22, fontWeight: "700", color: colors.text },
-  h: { fontSize: 16, fontWeight: "700", color: colors.text },
-  link: { color: colors.primaryDark, fontWeight: "600" },
-  item: { borderWidth: 1, borderColor: colors.peachBorder, borderRadius: 10, padding: 10, gap: 6 },
-  qty: { borderWidth: 1, borderColor: colors.peachBorder, borderRadius: 8, padding: 8, backgroundColor: "#fff" },
-  pin: {
-    fontSize: 40,
-    fontWeight: "800",
-    letterSpacing: 8,
-    color: colors.primaryDark,
-    textAlign: "center",
-    paddingVertical: 8,
+  head: { flexDirection: "row", gap: space.md, alignItems: "flex-start" },
+  code: { fontSize: 13, fontWeight: "600", color: colors.muted, fontVariant: ["tabular-nums"] },
+  why: { fontSize: 13, color: colors.warningInk, fontWeight: "700", textAlign: "center" },
+  event: { flexDirection: "row", gap: space.sm, alignItems: "flex-start", paddingVertical: 4 },
+  eventDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary, marginTop: 6 },
+  progress: { flexDirection: "row", gap: 6 },
+  stage: { flex: 1, gap: 6, minWidth: 0 },
+  stageTrack: { height: 6, borderRadius: 3, backgroundColor: "#F3EDE6", overflow: "hidden" },
+  stageBar: { height: 6, borderRadius: 3, backgroundColor: "transparent" },
+  stageLabel: { fontSize: 11, fontWeight: "600", color: colors.faint, textAlign: "center" },
+  wrap: { padding: 16, gap: 12, paddingBottom: 140 },
+  title: { fontSize: 22, fontWeight: "800", color: colors.ink, letterSpacing: -0.4 },
+  h: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  sub: { fontSize: 13, fontWeight: "800", color: colors.ink },
+  badges: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  item: { borderWidth: 1, borderColor: colors.line, borderRadius: radii.md, padding: space.md, gap: space.sm, backgroundColor: colors.surfaceMuted },
+  itemName: { fontSize: 15, fontWeight: "800", color: colors.ink },
+  input: { minHeight: 44, borderWidth: 1, borderColor: colors.lineStrong, borderRadius: radii.button, padding: 10, backgroundColor: colors.white, color: colors.ink },
+  pin: { fontSize: 48, fontWeight: "900", letterSpacing: 14, color: colors.primaryDark, textAlign: "center", paddingVertical: 8 },
+  pinInput: { fontSize: 32, letterSpacing: 16, textAlign: "center" },
+  thumbs: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  thumb: { width: 96, height: 96, borderRadius: radii.sm, backgroundColor: colors.peach },
+  pendingThumb: { alignItems: "center", justifyContent: "center", padding: 6 },
+  pendingText: { fontSize: 11, fontWeight: "800", color: colors.primaryDark, textAlign: "center" },
+  signature: { height: 120, backgroundColor: colors.white, borderRadius: radii.sm, borderWidth: 1, borderColor: colors.line },
+  sticky: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: 12,
+    paddingBottom: 16,
+    backgroundColor: colors.white,
+    borderTopWidth: 1,
+    borderTopColor: colors.peachBorder,
   },
-  distLine: { fontSize: 14, color: colors.ink, fontWeight: "600" },
-  okBox: {
-    backgroundColor: colors.successBg,
-    borderRadius: 10,
-    padding: 10,
-  },
-  okTxt: { color: "#047857", fontWeight: "700" },
+  failBox: { backgroundColor: colors.dangerBg, borderRadius: radii.md, padding: space.md, gap: 6 },
+  failTitle: { fontWeight: "800", color: colors.dangerInk },
+  failText: { color: colors.dangerInk },
 });

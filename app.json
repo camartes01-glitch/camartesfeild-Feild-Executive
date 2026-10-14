@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Camartes Field Test",
+    "name": "Camartes Field Executive",
     "slug": "camartes-field",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,11 +12,13 @@
       "bundleIdentifier": "com.camartes.field",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Camartes Field uses your location for attendance, task distance and geotagged proofs.",
-        "NSCameraUsageDescription": "Camartes Field takes geotagged photos at pickup, delivery and address verification."
+        "NSCameraUsageDescription": "Camartes Field takes geotagged photos at pickup, delivery and address verification.",
+        "NSPhotoLibraryUsageDescription": "Camartes Field attaches evidence photos to your jobs."
       }
     },
     "android": {
-      "package": "com.camartes.field.test",
+      "package": "com.camartes.field",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#FF6B35",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -24,9 +26,13 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "CAMERA"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
       ]
     },
     "web": {
@@ -54,10 +60,19 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Camartes Field takes geotagged photos at pickup, delivery and address verification."
+          "cameraPermission": "Camartes Field takes geotagged photos at pickup, delivery and address verification.",
+          "microphonePermission": false,
+          "photosPermission": "Camartes Field attaches evidence photos to your jobs."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "color": "#FF6B35"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

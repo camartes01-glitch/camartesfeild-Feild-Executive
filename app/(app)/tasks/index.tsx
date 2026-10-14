@@ -1,143 +1,174 @@
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { router } from "expo-router";
-import { Card, Muted } from "@/components/ui";
-import { Chip } from "@/components/chips";
-import { KindBadge, SlaBadge, StatusBadge } from "@/components/task-badges";
-import { colors } from "@/constants/theme";
+import { useCallback, useMemo, useState } from "react";
+import { FlatList, RefreshControl, StyleSheet, TextInput, View } from "react-native";
+import { router, useFocusEffect } from "expo-router";
+import { ClipboardCheck, Inbox, RefreshCw, Search, X } from "lucide-react-native";
+import { JobCard, JobCardSkeleton } from "@/components/job-card";
+import { JobsBanner } from "@/components/brand-art";
+import { Text } from "react-native";
+import { EmptyState, ErrorState, IconButton, PageHeader, SegmentedControl } from "@/components/ui";
+import { isBreached, useT, useTick } from "@/components/status";
+import { colors, radii, space } from "@/constants/theme";
 import { useApp } from "@/lib/app-context";
-import { checkInTarget } from "@/lib/field-ops";
-import { formatKm, haversineKm } from "@/lib/geo";
-import { formatWhen } from "@/lib/hours";
-import type { TaskKind } from "@/lib/types";
+import { clockOffsetMs, orderTasks } from "@/lib/field-ops";
+import { haversineKm } from "@/lib/geo";
+import { OPS } from "@/lib/ops-api";
+import { useLayout } from "@/lib/responsive";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { Task } from "@/lib/types";
 
-const FILTERS: { id: "all" | TaskKind; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "address_verification", label: "Verify" },
-  { id: "delivery", label: "Deliver" },
-  { id: "return", label: "Return" },
-  { id: "inventory", label: "Stock" },
-  { id: "vendor_visit", label: "Vendor" },
-];
+type ListBody = { tasks: Task[]; total: number; serverTime: string };
 
-export default function TasksScreen() {
-  const { state, live, user } = useApp();
-  const [q, setQ] = useState("");
-  const [kind, setKind] = useState<"all" | TaskKind>("all");
-  const [tab, setTab] = useState<"open" | "done">("open");
+export default function JobsScreen() {
+  const { get, home, online, queue, live, config } = useApp();
+  const tr = useT();
+  const l = useLayout();
+  const insets = useSafeAreaInsets();
+  useTick(30_000);
+  const [scope, setScope] = useState<"open" | "closed">("open");
+  const [rows, setRows] = useState<Task[] | null>(null);
+  const [serverTime, setServerTime] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
-  const list = useMemo(() => {
-    return state.tasks
-      .filter((t) => {
-        if (t.assigneeId !== user?.id) return false;
-        const open = t.status !== "completed";
-        if (tab === "open" && !open) return false;
-        if (tab === "done" && open) return false;
-        if (kind !== "all" && t.kind !== kind) return false;
-        const blob = `${t.title} ${t.customerName} ${t.bookingRef} ${t.customerPlace.area}`.toLowerCase();
-        if (q && !blob.includes(q.toLowerCase())) return false;
-        return true;
-      })
-      .sort((a, b) => (a.beatSeq ?? 99) - (b.beatSeq ?? 99) || a.scheduledFor.localeCompare(b.scheduledFor));
-  }, [state.tasks, user?.id, q, kind, tab]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await get<ListBody>(`${OPS}/tasks?scope=${scope}&limit=100`);
+    setLoading(false);
+    if (res.ok) {
+      setRows(orderTasks(res.body.tasks));
+      setServerTime(res.body.serverTime);
+      setError(null);
+    } else {
+      setError(res.message);
+    }
+  }, [get, scope]);
+
+  // Reload whenever the screen regains focus (e.g. back from saving a visit or finishing a job) and on reconnect.
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load, online]),
+  );
+
+  // Offline: fall back to the open tasks cached with the home summary.
+  const data = rows ?? (scope === "open" ? orderTasks(home?.openTasks ?? []) : []);
+  const q = query.trim().toLowerCase();
+  const shown = useMemo(
+    () =>
+      !q
+        ? data
+        : data.filter((t) => [t.taskCode, t.title, t.stop?.name, t.stop?.address, t.area, t.customerName].some((v) => (v ?? "").toLowerCase().includes(q))),
+    [data, q],
+  );
+  // Two cards side by side whenever there is room (reference layout); one column on phones.
+  const cols = l.twoCol ? 2 : 1;
+  const offset = clockOffsetMs(serverTime ?? home?.serverTime ?? null);
+
+  const header = (
+    <View style={{ gap: space.md, marginBottom: space.sm }}>
+      {/* Wide screens: sunset camera-kit banner behind the header, bleeding to the top and right edges. */}
+      {l.twoCol ? <JobsBanner height={258} style={{ position: "absolute", top: -(insets.top + space.lg), right: -l.pad }} /> : null}
+      <PageHeader
+        large={l.twoCol}
+        title={tr("jobs")}
+        subtitle={scope === "open" && (rows ?? home?.openTasks) ? tr("jobsSubtitle", { n: (rows ?? home?.openTasks ?? []).length }) : undefined}
+        right={<IconButton icon={RefreshCw} label={tr("refresh")} onPress={() => void load()} />}
+      />
+      {l.twoCol ? <Text style={styles.intro}>{tr("jobsIntro")}</Text> : null}
+      <View style={styles.toolbar}>
+        <View style={{ flex: 1, maxWidth: l.isPhone ? undefined : 585 }}>
+          <SegmentedControl
+            options={[
+              { id: "open" as const, label: tr("openTab"), count: scope === "open" && rows ? rows.length : home?.openTasks.length },
+              { id: "closed" as const, label: tr("closedTab"), count: scope === "closed" && rows ? rows.length : undefined },
+            ]}
+            value={scope}
+            accent
+            onChange={(id) => {
+              if (id === scope) return;
+              setRows(null);
+              setScope(id);
+            }}
+          />
+        </View>
+      </View>
+      <View style={styles.search}>
+        <Search size={18} color={colors.faint} />
+        <TextInput
+          accessibilityLabel={tr("searchJobs")}
+          placeholder={l.isPhone ? tr("searchJobs") : tr("searchJobsHint")}
+          placeholderTextColor={colors.faint}
+          value={query}
+          onChangeText={setQuery}
+          style={styles.searchInput}
+          autoCapitalize="none"
+        />
+        {query ? <IconButton icon={X} label={tr("clear")} onPress={() => setQuery("")} size={36} /> : null}
+      </View>
+      {error ? <ErrorState message={rows || data.length ? tr("showingSaved", { reason: error }) : error} onRetry={() => void load()} retryLabel={tr("retry")} /> : null}
+    </View>
+  );
 
   return (
-    <ScrollView contentContainerStyle={styles.wrap}>
-      <Muted>Address checks, store pickups, deliveries, returns and hub counts.</Muted>
-      <TextInput
-        nativeID="task-search"
-        accessibilityLabel="Search tasks by customer, booking, or area"
-        placeholder="Search customer, booking, area…"
-        value={q}
-        onChangeText={setQ}
-        style={styles.search}
+    <View style={styles.screen}>
+      <FlatList
+        key={`cols-${cols}`}
+        data={shown}
+        numColumns={cols}
+        keyExtractor={(task) => task.id}
+        columnWrapperStyle={cols > 1 ? { gap: space.md } : undefined}
+        contentContainerStyle={{ paddingHorizontal: l.pad, paddingTop: insets.top + space.lg, paddingBottom: l.sideNav ? space.xxl : 110, gap: space.md, width: "100%", maxWidth: Math.min(l.maxWidth, 1450), alignSelf: "center" }}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+        ListHeaderComponent={header}
+        ListEmptyComponent={
+          loading && !rows ? (
+            <View style={{ gap: space.md }}>
+              <JobCardSkeleton />
+              <JobCardSkeleton />
+            </View>
+          ) : error && !rows ? null : q ? (
+            <EmptyState icon={Search} title={tr("noSearchResults")} body={tr("noSearchResultsBody")} />
+          ) : (
+            <EmptyState
+              icon={scope === "open" ? ClipboardCheck : Inbox}
+              title={scope === "open" ? tr("jobsEmpty") : tr("jobsClosedEmpty")}
+              body={scope === "open" ? tr("jobsEmptyBody") : undefined}
+            />
+          )
+        }
+        renderItem={({ item }) => (
+          <View style={{ flex: 1 / cols }}>
+            <JobCard
+              task={item}
+              serverTime={serverTime ?? home?.serverTime ?? null}
+              distanceKm={live && item.stop ? haversineKm(live, item.stop) : null}
+              pending={queue.some((q) => q.entityKey === `task:${item.id}` && q.status !== "SYNCED")}
+              breached={isBreached(item, offset, config?.rules.slaAtRiskMin ?? 45)}
+              onPress={() => router.push(`/(app)/tasks/${item.id}`)}
+              rich={l.width >= 1400}
+            />
+          </View>
+        )}
       />
-      <View style={styles.row}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ selected: tab === "open" }}
-          onPress={() => setTab("open")}
-          style={[styles.tab, tab === "open" && styles.tabOn]}
-        >
-          <Text style={tab === "open" ? styles.tabOnText : styles.tabText}>Open</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ selected: tab === "done" }}
-          onPress={() => setTab("done")}
-          style={[styles.tab, tab === "done" && styles.tabOn]}
-        >
-          <Text style={tab === "done" ? styles.tabOnText : styles.tabText}>Completed</Text>
-        </Pressable>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        {FILTERS.map((f) => (
-          <Chip key={f.id} label={f.label} selected={kind === f.id} onPress={() => setKind(f.id)} />
-        ))}
-      </ScrollView>
-      {list.length === 0 ? (
-        <Card>
-          <Muted>No tasks in this view.</Muted>
-        </Card>
-      ) : (
-        list.map((t) => {
-          const youDist = live
-            ? haversineKm(live, checkInTarget(t))
-            : null;
-          return (
-            <Pressable key={t.id} onPress={() => router.push(`/(app)/tasks/${t.id}`)}>
-              <Card accent={false}>
-                <View style={styles.jobRow}>
-                  <View style={styles.num}>
-                    <Text style={styles.numTxt}>{t.beatSeq ?? "–"}</Text>
-                  </View>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={styles.body} numberOfLines={2}>
-                      {t.customerPlace.area} · {t.customerName}
-                    </Text>
-                    <Muted>
-                      {t.beatWindow ?? formatWhen(t.scheduledFor)}
-                      {youDist != null ? ` · ${formatKm(youDist)} away` : ""}
-                    </Muted>
-                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-                      <KindBadge kind={t.kind} />
-                      <StatusBadge status={t.status} />
-                      <SlaBadge task={t} />
-                    </View>
-                  </View>
-                </View>
-              </Card>
-            </Pressable>
-          );
-        })
-      )}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 16, gap: 10, backgroundColor: colors.bg, paddingBottom: 40 },
-  body: { fontSize: 16, fontWeight: "700", color: colors.text },
+  screen: { flex: 1, backgroundColor: colors.bg },
+  intro: { fontSize: 17, fontWeight: "500", color: colors.muted, marginTop: -space.md, maxWidth: 600 },
+  toolbar: { flexDirection: "row", alignItems: "center", gap: space.sm },
   search: {
-    borderWidth: 1,
-    borderColor: colors.peachBorder,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 10,
-  },
-  row: { flexDirection: "row", gap: 8 },
-  tab: { flex: 1, padding: 10, borderRadius: 10, backgroundColor: colors.peach, alignItems: "center" },
-  tabOn: { backgroundColor: colors.primary },
-  tabText: { color: colors.text, fontWeight: "600" },
-  tabOnText: { color: "#fff", fontWeight: "600" },
-  jobRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
-  num: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.primary,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: space.sm,
+    backgroundColor: colors.white,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: space.md,
+    minHeight: 56,
   },
-  numTxt: { color: "#fff", fontWeight: "800" },
+  searchInput: { flex: 1, fontSize: 15, color: colors.ink, paddingVertical: 10 },
 });

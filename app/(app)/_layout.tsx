@@ -1,83 +1,52 @@
-import { useEffect } from "react";
-import { Tabs, router } from "expo-router";
-import { Home, ListChecks, Clock3, Menu, Store } from "lucide-react-native";
+import { View } from "react-native";
+import { Redirect, Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { CalendarDays, House, ListChecks, Store, UserRound } from "lucide-react-native";
+import { AppNav } from "@/components/app-nav";
+import { SyncBar, useT } from "@/components/status";
 import { useApp } from "@/lib/app-context";
-import { colors } from "@/constants/theme";
-import { t } from "@/lib/i18n";
+import { colors, space } from "@/constants/theme";
+import { headerOptions } from "@/constants/nav";
+import { useLayout } from "@/lib/responsive";
 
 export default function AppTabs() {
-  const { ready, user, state } = useApp();
-  const lang = state.language;
+  const { ready, user } = useApp();
+  const tr = useT();
+  const l = useLayout();
+  const insets = useSafeAreaInsets();
 
-  useEffect(() => {
-    if (!ready) return;
-    if (!user) router.replace("/");
-    else if (user.role === "operations_manager") router.replace("/admin");
-  }, [ready, user]);
+  // Declarative auth gate. Navigating imperatively from an effect while returning null unmounted the
+  // tab navigator mid-navigation and looped (crash on sign-out).
+  if (!ready) return null;
+  // The sign-in screen lives at /login: "/" is this group's Home tab, so redirecting there would loop.
+  if (!user) return <Redirect href="/login" />;
+  if (user.role === "operations_manager") return <Redirect href="/admin" />;
 
-  if (!ready || !user) return null;
-
+  // Phones/tablets: floating bottom bar. Laptops/desktops: sidebar (see components/app-nav).
+  const side = l.sideNav;
+  // Height of the floating bar: wrapper top padding + bar + safe-area padding.
+  const barHeight = 70 + Math.max(insets.bottom, space.sm);
   return (
-    <Tabs
-      screenOptions={{
-        headerStyle: { backgroundColor: colors.primary },
-        headerTintColor: colors.white,
-        headerTitleStyle: { fontWeight: "800" },
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: {
-          backgroundColor: colors.white,
-          borderTopColor: colors.peachBorder,
-          height: 64,
-          paddingTop: 4,
-        },
-        tabBarLabelStyle: { fontWeight: "700", fontSize: 11 },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: t(lang, "home"),
-          tabBarIcon: ({ color }) => <Home size={22} color={color} />,
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <Tabs
+        tabBar={(props) => <AppNav {...props} />}
+        screenOptions={{
+          ...headerOptions,
+          tabBarPosition: side ? "left" : "bottom",
+          tabBarActiveTintColor: colors.primary,
+          tabBarInactiveTintColor: colors.muted,
         }}
-      />
-      <Tabs.Screen
-        name="tasks"
-        options={{
-          title: t(lang, "tasks"),
-          headerShown: false,
-          tabBarIcon: ({ color }) => <ListChecks size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="vendors"
-        options={{
-          title: t(lang, "vendors"),
-          headerShown: false,
-          tabBarIcon: ({ color }) => <Store size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="attendance"
-        options={{
-          title: t(lang, "hours"),
-          tabBarIcon: ({ color }) => <Clock3 size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="leave"
-        options={{
-          href: null,
-          title: t(lang, "leave"),
-        }}
-      />
-      <Tabs.Screen
-        name="more"
-        options={{
-          title: t(lang, "more"),
-          tabBarIcon: ({ color }) => <Menu size={22} color={color} />,
-        }}
-      />
-    </Tabs>
+      >
+        {/* Home, Roster and Profile carry their own large titles in the page. */}
+        <Tabs.Screen name="index" options={{ title: tr("home"), headerShown: false, tabBarIcon: ({ color }) => <House size={22} color={color} /> }} />
+        <Tabs.Screen name="tasks" options={{ title: tr("jobs"), headerShown: false, tabBarIcon: ({ color }) => <ListChecks size={22} color={color} /> }} />
+        <Tabs.Screen name="onboard" options={{ title: tr("onboard"), headerShown: false, tabBarIcon: ({ color }) => <Store size={22} color={color} /> }} />
+        <Tabs.Screen name="roster" options={{ title: tr("roster"), headerShown: false, tabBarIcon: ({ color }) => <CalendarDays size={22} color={color} /> }} />
+        <Tabs.Screen name="profile" options={{ title: tr("profile"), headerShown: false, tabBarIcon: ({ color }) => <UserRound size={22} color={color} /> }} />
+      </Tabs>
+      <View style={{ position: "absolute", left: side ? l.sidebarWidth : 0, right: 0, bottom: side ? 0 : barHeight }} pointerEvents="box-none">
+        <SyncBar />
+      </View>
+    </View>
   );
 }

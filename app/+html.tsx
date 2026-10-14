@@ -30,12 +30,12 @@ html, body, #root {
   min-height: 100dvh;
 }
 body {
-  background-color: #FFF7ED;
+  background-color: #FFF8EF;
   overflow: auto !important;
   margin: 0;
 }
 @media (prefers-color-scheme: dark) {
   body {
-    background-color: #FFF7ED;
+    background-color: #FFF8EF;
   }
 }`;

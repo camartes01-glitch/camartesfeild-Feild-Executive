@@ -1,415 +1,336 @@
+/**
+ * Types mirror the Camartes Field Operations API. The server is the source of truth for
+ * tasks, SLA, evidence, inventory, rosters and shifts; the app never invents these values.
+ */
+
+export type Lang = "en" | "hi" | "te";
+export type UserRole = "field_executive" | "operations_manager";
+
 export type TaskKind =
-  | "address_verification"
+  | "pickup"
   | "delivery"
   | "return"
+  | "address_verification"
   | "inventory"
-  | "vendor_visit";
+  | "vendor_visit"
+  | "marketplace_booking";
 
-export type TaskStatus =
-  | "unassigned"
-  | "assigned"
-  | "in_progress"
-  | "awaiting_photo"
-  | "completed"
-  | "blocked";
+export type TaskState =
+  | "UNASSIGNED"
+  | "ASSIGNED"
+  | "EN_ROUTE"
+  | "ARRIVED"
+  | "CHECKED_IN"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "FAILED_ATTEMPT"
+  | "RETRY"
+  | "CANCELLED";
 
-export type TaskPriority = "low" | "normal" | "high" | "urgent";
+export type SlaStatus = "ON_TRACK" | "AT_RISK" | "BREACHED";
+export type StopType = "HUB" | "CUSTOMER" | "VENDOR" | "OUTLET";
+export type KitGrade = "GOOD" | "SCUFF" | "DENT" | "MISSING";
+export type FailureCode = "NSZ" | "CUSTOMER_UNAVAILABLE" | "KIT_REFUSED" | "WEATHER" | "VEHICLE" | "ADDRESS";
+export type VisitStatus = "INTERESTED" | "NEED_TIME" | "NOT_INTERESTED" | "FOLLOW_UP" | "ONBOARDED";
+export type PartnerType =
+  | "PHOTOGRAPHY_STUDIO"
+  | "FREELANCE_PHOTOGRAPHER"
+  | "VIDEOGRAPHER"
+  | "ALBUM_DESIGNER"
+  | "VIDEO_EDITOR"
+  | "LED_WALL_PARTNER"
+  | "WEBLIVE_PARTNER";
 
-export type UserRole = "field_executive" | "operations_manager";
-export type AuthSource = "demo" | "field_ops";
-export type OfflineStatus = "pending" | "success" | "failed";
+export type GeoPoint = { lat: number; lng: number; accuracyM?: number | null };
 
-export type LeaveType = "casual" | "sick" | "earned" | "unpaid";
-export type LeaveStatus = "pending" | "approved" | "rejected";
-
-export type GeoPoint = {
-  lat: number;
-  lng: number;
-  accuracyM?: number;
-  capturedAt?: string;
-};
-
-export type Place = {
+export type Principal = {
   id: string;
-  name: string;
-  address: string;
-  area: string;
-  phone?: string;
-  geo: GeoPoint;
+  employeeId: string;
+  role: UserRole;
+  displayName: string;
+  emailOrPhone: string;
+  isActive: boolean;
+  phone?: string | null;
+  city?: string | null;
+  hubId?: string | null;
+  geoUnit?: GeoBrief | null;
+  scopeGeoUnit?: GeoBrief | null;
 };
 
-export type EquipmentItem = {
+/** Compact geography reference carried on operational records (full hierarchy via /api/geography). */
+export type GeoBrief = { id: string; name: string; level: string; subtype?: string | null; status?: string };
+
+export type Hub = { id: string; name: string; city: string; address?: string | null; lat: number; lng: number; geo?: GeoBrief | null };
+
+export type Sla = {
+  status: SlaStatus | null;
+  remainingSeconds: number | null;
+  dueAt: string | null;
+  startAt: string | null;
+  breachedAt: string | null;
+  lateReason: string | null;
+};
+
+export type TaskItem = {
+  itemId: string;
   sku: string;
   name: string;
-  serial: string;
-  condition: "good" | "fair" | "damaged";
-  qty: number;
+  serial: string; // masked for field executives: the last 4 come from the physical label
+  condition: KitGrade;
+  locationType: string;
+  serialVerified: boolean;
 };
 
-export type GeoPhoto = {
+export type Stop = { type: StopType | null; name: string | null; address: string | null; lat: number; lng: number };
+
+export type Task = {
   id: string;
-  taskId: string;
-  checkpoint: string;
-  uri: string;
-  note?: string;
-  geo: Required<Pick<GeoPoint, "lat" | "lng">> & {
-    accuracyM: number;
-    capturedAt: string;
-  };
+  taskCode: string;
+  title: string;
+  kind: TaskKind;
+  notes: string;
+  customerName: string;
+  customerPhone: string | null;
+  area: string | null;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: string;
+  state: TaskState;
+  attemptNo: number;
+  assigneeId: string | null;
+  hubId: string | null;
+  stop: Stop | null;
+  sla: Sla;
+  startedAt: string | null;
+  checkedInAt: string | null;
+  completedAt: string | null;
+  items: TaskItem[];
+  createdAt: string | null;
+  updatedAt: string | null;
+  geo?: GeoBrief | null;
 };
 
-export type TaskEvent = {
+export type TaskEvidence = {
+  checkIn: { at: string; distanceM: number; accuracyM: number | null; lat: number; lng: number } | null;
+  rejectedCheckIns: { at: string; code: string; distanceM: number | null }[];
+  photos: {
+    id: string;
+    mediaId: string;
+    url: string | null;
+    checkpoint: string;
+    lat: number;
+    lng: number;
+    accuracyM: number | null;
+    attemptNo: number;
+    at: string;
+  }[];
+  kitConditions: { itemId: string; grade: KitGrade; phase: string; notes: string | null; at: string }[];
+  pin: { state: "ACTIVE" | "EXPIRED" | "LOCKED" | "VERIFIED"; expiresAt: string; attemptsLeft: number } | null;
+  pinRequired: boolean;
+  pinDelivery: "IN_APP" | "WHATSAPP";
+  podRequired: boolean;
+  pod: { recipientName: string; signatureUrl: string | null; at: string; lat: number; lng: number } | null;
+  failures: { attemptNo: number; code: FailureCode; label: string; notes: string | null; slaStatus: string | null; at: string }[];
+};
+
+export type TaskDetail = Task & {
+  evidence: TaskEvidence;
+  timeline: { id: string; at: string; label: string; eventType: string }[];
+  serverTime: string;
+};
+
+export type RosterStop = {
   id: string;
-  at: string;
-  label: string;
-};
-
-export type LeaveRequest = {
-  id: string;
-  userId: string;
-  type: LeaveType;
-  from: string;
-  to: string;
-  days: number;
-  reason: string;
-  status: LeaveStatus;
-  submittedAt: string;
-  createdAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-};
-
-export type PingActivity = "hub" | "travel" | "customer" | "vendor" | "unknown";
-
-export type LocationPing = {
-  at: string;
+  sequence: number;
+  type: StopType;
+  name: string;
+  address: string | null;
   lat: number;
   lng: number;
-  accuracyM: number;
-  source: "gps" | "simulated";
-  activity?: PingActivity;
-  userId?: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  task: Task | null;
 };
 
-export type AttemptCode =
-  | "nsz"
-  | "customer_unavailable"
-  | "kit_refused"
-  | "weather"
-  | "vehicle"
-  | "address"
-  | "other";
-
-export type TaskAttempt = {
-  at: string;
-  code: AttemptCode;
-  note: string;
-};
-
-export type KitConditionGrade = "good" | "scuff" | "dent" | "missing";
-
-export type KitCondition = {
-  overall: KitConditionGrade;
-  scuff: boolean;
-  dent: boolean;
-  missingParts: boolean;
-  notes: string;
-};
-
-export type VendorIntel = {
-  gstin: string;
-  decisionMaker: string;
-  competitor: string;
-  ownedKit: string;
-  nextShootDate: string;
-};
-
-export type FieldTask = {
-  id: string;
-  kind: TaskKind;
-  title: string;
-  bookingRef: string;
-  assigneeId?: string;
-  assignedAt?: string;
-  customerName: string;
-  customerPhone: string;
-  status: TaskStatus;
-  scheduledFor: string;
-  store: Place;
-  customerPlace: Place;
-  items: EquipmentItem[];
-  notes: string;
-  photos: GeoPhoto[];
-  timeline: TaskEvent[];
-  startedAt?: string;
-  completedAt?: string;
-  customerConfirmed?: boolean;
-  addressMatch?: "match" | "mismatch" | "unverified";
-  inventoryCounted?: Record<string, number>;
-  otpCode?: string;
-  otpVerified?: boolean;
-  otpGeneratedAt?: string;
-  scannedSerials?: string[];
-  whatsappSent?: boolean;
-  customerRating?: number;
-  slaMinutes?: number;
-  priority?: TaskPriority;
-  createdBy?: string;
-  createdAt?: string;
-  vendorId?: string;
-  vendorOutcome?: VendorVisitOutcome;
-  beatSeq?: number;
-  beatWindow?: string;
-  attempts?: TaskAttempt[];
-  kitPickupCondition?: KitCondition;
-  kitReturnCondition?: KitCondition;
-  signatureSvg?: string;
-  declineReason?: string;
-  checkedInAt?: string;
-  checkedInGeo?: GeoPoint;
-  storeCheckedInAt?: string;
-  storeCheckedInGeo?: GeoPoint;
-  customerCheckedInAt?: string;
-  customerCheckedInGeo?: GeoPoint;
-  vendorIntel?: VendorIntel;
-};
-
-/** Camartes.com Services tab categories. */
-export type VendorKind =
-  | "photographer"
-  | "videographer"
-  | "album_designer"
-  | "video_editor"
-  | "web_live_services"
-  | "led_wall"
-  | "fly_cam"
-  | "photography_firm"
-  | "camera_rental"
-  | "service_centres"
-  | "outdoor_studios"
-  | "editing_studios"
-  | "printing_labs"
-  | "software_services";
-
-export type VendorListing = "business" | "freelancer" | "both";
-export type VendorSource = "camartes" | "field";
-
-export type VendorStatus = "prospect" | "visited" | "follow_up" | "onboarded" | "declined";
-
-/** How the outlet responded to Camartes onboarding. `declined` is a legacy alias of not_interested. */
-export type OnboardInterest =
-  | "to_meet"
-  | "interested"
-  | "need_time"
-  | "not_interested"
-  | "follow_up"
-  | "onboarded";
-
-export type VendorVisitOutcome =
-  | "interested"
-  | "need_time"
-  | "not_interested"
-  | "follow_up"
-  | "onboarded"
-  | "courtesy"
-  | "declined";
-
-export type Vendor = {
-  id: string;
-  kind: VendorKind;
-  listing: VendorListing;
-  source: VendorSource;
-  name: string;
-  contact: string;
-  phone: string;
-  address: string;
-  area: string;
-  city: string;
-  geo: GeoPoint;
-  status: VendorStatus;
-  /** True when this FE is working the outlet for Camartes onboarding (not a catalog listing). */
-  onboarding?: boolean;
-  interest?: OnboardInterest;
-  lastVisitedAt?: string;
-  nextMeetingAt?: string;
-  nextMeetingNote?: string;
-  partnerCode?: string;
-  notes: string;
-  photos?: GeoPhoto[];
-  serviceTypes?: string[];
-  kycVerified?: boolean;
-  cameraCount?: number;
-  equipmentCount?: number;
-  profileUrl?: string;
-  /** True when lat/lng is a city centroid, not a storefront pin. */
-  geoApprox?: boolean;
-  gstin?: string;
-  decisionMaker?: string;
-  competitor?: string;
-  ownedKit?: string;
-  nextShootDate?: string;
-  declineReason?: string;
-};
-
-export type VendorVisit = {
-  id: string;
-  vendorId: string;
-  at: string;
-  outcome: VendorVisitOutcome;
-  pitch: string;
-  note: string;
-  geo?: GeoPoint;
-  onSite: boolean;
-};
-
-export type DamageReport = {
-  id: string;
-  taskId: string;
-  serial: string;
-  note: string;
-  at: string;
-};
-
-export type ExpenseClaim = {
-  id: string;
-  userId: string;
+export type Roster = {
+  id?: string;
   date: string;
-  km: number;
-  amountInr: number;
-  note: string;
-  status: "draft" | "submitted" | "approved" | "rejected";
-  createdAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-};
-
-export type AuditEvent = {
-  id: string;
-  at: string;
-  label: string;
-};
-
-export type OfflineItem = {
-  id: string;
-  at: string;
-  label: string;
-  synced: boolean;
-  status: OfflineStatus;
-  retries?: number;
-  lastRetryAt?: string;
-  lastError?: string;
-  idempotencyKey: string;
-  op?: FieldOpsMutation;
-};
-
-export type FieldOpsMutation =
-  | { type: "create_task"; payload: FieldTask }
-  | { type: "assign_task"; payload: { taskId: string; assigneeId: string; assignedAt: string } }
-  | { type: "set_task_status"; payload: { taskId: string; status: TaskStatus; label: string } }
-  | { type: "clock_in"; payload: Shift }
-  | { type: "clock_out"; payload: { shiftId: string; clockOut: string } }
-  | { type: "request_leave"; payload: LeaveRequest }
-  | { type: "review_leave"; payload: { id: string; status: LeaveStatus; reviewedAt: string; reviewedBy: string } }
-  | { type: "add_expense"; payload: ExpenseClaim }
-  | { type: "review_expense"; payload: { id: string; status: "approved" | "rejected"; reviewedAt: string; reviewedBy: string } };
-
-export type CreateTaskInput = {
-  title: string;
-  description: string;
-  kind: TaskKind;
-  customerName: string;
-  customerPhone?: string;
-  area: string;
-  address?: string;
-  vendorId?: string;
-  priority: TaskPriority;
-  dueAt: string;
-  assigneeId?: string;
-};
-
-export type AppNotice = {
-  id: string;
-  title: string;
-  body: string;
-  at: string;
-  read: boolean;
-};
-
-export type TrainingItem = {
-  id: string;
-  title: string;
-  body: string;
-  done: boolean;
-};
-
-export type TeamMate = {
-  id: string;
-  name: string;
-  employeeId: string;
-  status: "on_shift" | "off_shift" | "on_task";
-  area: string;
-  geo: GeoPoint;
-  presence: "live_gps" | "last_seen" | "directory";
-  lastSeenAt?: string;
+  published: boolean;
+  version?: number;
+  shiftStart?: string;
+  shiftEnd?: string;
+  hub?: Hub | null;
+  updatedAt?: string;
+  stops: RosterStop[];
 };
 
 export type Shift = {
   id: string;
   userId: string;
-  date: string;
   clockIn: string;
-  clockOut?: string;
-  clockInGeo?: GeoPoint;
-  clockOutGeo?: GeoPoint;
-  selfieUri?: string;
-  geofenceOk?: boolean;
-  geofenceOverride?: string;
-  otRequested?: boolean;
-  safetyHelmet?: boolean;
-  safetyTwoWheeler?: boolean;
+  clockOut: string | null;
+  clockInGeo: GeoPoint | null;
+  clockInVia: "FIRST_STOP" | "ROSTER_WINDOW" | "OVERRIDE" | null;
+  clockInDistanceKm: number | null;
+  overrideReason: string | null;
+  minutes?: number;
 };
 
-export type LeavePolicy = {
-  casual: number;
-  sick: number;
-  earned: number;
+export type ShiftSummary = {
+  shiftId: string;
+  workedMinutes: number;
+  overtimeMinutes: number;
+  travelMinutes: number;
+  hubMinutes: number;
+  customerMinutes: number;
+  vendorMinutes: number;
+  distanceKm: number;
+  gpsPoints: number;
+  tasksCompleted: number;
 };
 
-export type FieldUser = {
+export type Home = {
+  serverTime: string;
+  employee: Principal & { hub: Hub | null };
+  shift: Shift | null;
+  clockInGate: {
+    firstStop: { name: string; lat: number; lng: number; taskId: string | null } | null;
+    rosterWindow: { opensAt: string; startAt: string; endAt: string; open: boolean } | null;
+    radiusKm: number;
+  };
+  today: Roster;
+  tomorrow: Roster;
+  nextTask: Task | null;
+  openTasks: Task[];
+  counts: { completed: number; pending: number; failed: number; slaAtRisk: number; slaBreached: number };
+  unreadNotifications: number;
+  cityManagers: {
+    id: string;
+    name: string;
+    phone: string | null;
+    city: string | null;
+    hubId: string;
+    hubName: string;
+    lat: number;
+    lng: number;
+  }[];
+};
+
+export type OpsConfig = {
+  rules: {
+    clockInRadiusKm: number;
+    rosterEarlyLoginMin: number;
+    checkInRadiusM: number;
+    maxGpsAccuracyM: number;
+    hubRadiusM: number;
+    pinTtlMin: number;
+    pinMaxAttempts: number;
+    returnRequiresPin: boolean;
+    slaAtRiskMin: number;
+    slaLateReasonRequired: boolean;
+    gpsPointIntervalS: number;
+    gpsBatchMax: number;
+    standardShiftMin: number;
+    tzOffsetMin: number;
+  };
+  failureCodes: { code: FailureCode; label: string }[];
+  kitGrades: KitGrade[];
+  partnerTypes: { code: PartnerType; label: string }[];
+  visitStatuses: VisitStatus[];
+  nextMeetingRequiredFor: VisitStatus[];
+  serverTime: string;
+};
+
+export type Partner = {
   id: string;
-  name: string;
-  email: string;
-  phone: string;
+  partnerType: PartnerType;
+  partnerTypeLabel: string;
+  businessName: string;
+  contactPerson: string;
+  phone: string | null;
+  address: string | null;
+  lat: number;
+  lng: number;
+  gstAvailable: boolean | null;
+  gstNumber: string | null;
+  status: VisitStatus;
+  nextMeetingAt: string | null;
+  updatedAt: string;
+};
+
+export type OnboardingVisit = {
+  id: string;
+  partnerId: string;
+  partner: Partner | null;
+  visitStatus: VisitStatus;
+  gstAvailable: boolean;
+  gstNumber: string | null;
+  nextMeetingAt: string | null;
+  notes: string | null;
+  photos: { mediaId: string; url: string | null }[];
+  lat: number;
+  lng: number;
   employeeId: string;
-  role: UserRole;
-  hub: string;
-  avatarInitials: string;
-  employment: "Camartes employee";
-  source: AuthSource;
+  visitedAt: string;
 };
 
-export type AuthSession = {
-  user: FieldUser;
-  token: string | null;
+export type InventoryItem = {
+  id: string;
+  sku: string;
+  name: string;
+  serial: string;
+  condition: KitGrade;
+  locationType: "HUB" | "EMPLOYEE" | "CUSTOMER" | "STORE";
+  locationId: string;
+  updatedAt: string;
 };
 
-export type Lang = "en" | "hi" | "te";
-
-export type AppState = {
-  userId: string | null;
-  language: Lang;
-  deviceBoundId: string | null;
-  tasks: FieldTask[];
-  shifts: Shift[];
-  leaves: LeaveRequest[];
-  pings: LocationPing[];
-  damages: DamageReport[];
-  expenses: ExpenseClaim[];
-  audit: AuditEvent[];
-  offlineQueue: OfflineItem[];
-  notices: AppNotice[];
-  training: TrainingItem[];
-  leavePolicy: LeavePolicy;
-  vendors: Vendor[];
-  vendorVisits: VendorVisit[];
+export type LeaveBalance = { type: "casual" | "sick" | "earned"; entitled: number; used: number; pending: number; available: number };
+export type LeaveRequest = {
+  id: string;
+  type: "casual" | "sick" | "earned" | "unpaid";
+  from: string;
+  to: string;
+  days: number;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
 };
+
+export type HoursMonth = {
+  month: string;
+  standardShiftMinutes: number;
+  attendanceDays: number;
+  workedMinutes: number;
+  overtimeMinutes: number;
+  days: { date: string; workedMinutes: number; overtimeMinutes: number }[];
+  shifts: {
+    shiftId: string;
+    clockIn: string;
+    clockOut: string | null;
+    workedMinutes: number;
+    overtimeMinutes: number;
+    overtimeRequest: { status: string } | null;
+    via: string | null;
+  }[];
+};
+
+export type AppNotification = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown> | null;
+  read: boolean;
+  at: string;
+};
+
+export type SosResult = {
+  id: string;
+  at: string;
+  gpsRecorded: boolean;
+  manager: { id: string; name: string; phone: string | null; city: string | null; distanceKm: number | null } | null;
+  /** What the server actually delivered: in-app notifications and the push outcome. */
+  delivery?: { inAppNotified: number; push: "SENT" | "PUSH_DISABLED" | "NO_DEVICE" | "FAILED" | "PARTIAL" | "NONE" };
+};
+
+export type AuthSession = { user: Principal; token: string; expiresAt: string | null };

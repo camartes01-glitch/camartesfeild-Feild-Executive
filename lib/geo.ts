@@ -2,6 +2,13 @@ import type { GeoPoint } from "@/lib/types";
 
 const EARTH_KM = 6371;
 
+/** A fix older than this is not "live": the phone may have lost the signal since. */
+export const GPS_STALE_MS = 2 * 60_000;
+
+export function isStaleFix(fix: { at: string } | null | undefined, now = Date.now()) {
+  return !fix || now - Date.parse(fix.at) > GPS_STALE_MS;
+}
+
 export function toRad(deg: number) {
   return (deg * Math.PI) / 180;
 }
@@ -25,6 +32,22 @@ export function formatKm(km: number) {
 
 export function formatCoord(n: number, digits = 5) {
   return n.toFixed(digits);
+}
+
+export type NavTarget = { lat?: number | null; lng?: number | null; address?: string | null };
+
+/**
+ * Directions to the stop's real coordinates (or its address when there are none). The current position is
+ * optional: without a GPS fix the maps app starts from wherever it locates the phone. Null = nowhere to go.
+ */
+export function navigationUrl(origin: GeoPoint | null, dest: NavTarget | null | undefined): string | null {
+  if (!dest) return null;
+  const hasCoords = Number.isFinite(dest.lat) && Number.isFinite(dest.lng) && !(dest.lat === 0 && dest.lng === 0);
+  const address = dest.address?.trim();
+  const target = hasCoords ? `${dest.lat},${dest.lng}` : address ? encodeURIComponent(address) : null;
+  if (!target) return null;
+  const from = origin ? `&origin=${origin.lat},${origin.lng}` : "";
+  return `https://www.google.com/maps/dir/?api=1${from}&destination=${target}&travelmode=driving`;
 }
 
 export function mapsDirUrl(origin: GeoPoint, dest: GeoPoint) {

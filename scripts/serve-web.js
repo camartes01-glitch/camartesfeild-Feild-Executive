@@ -69,14 +69,13 @@ const DOWNLOAD_HTML = `<!DOCTYPE html>
   <h1>Camartes Field Test APK</h1>
   <p>45 MB arm64 build for field-executive testing. Package: <code>com.camartes.field.test</code></p>
   <p><a class="btn" href="/camartes-field-test.apk">Download APK on this phone</a></p>
-  <p>Or use this public link (expires in about 1 hour):<br /><a href="https://tmpfiles.org/dl/1788111484.f682c6d2b31e852d/wKwRsIl7rmsQ/camartes-field-test.apk">https://tmpfiles.org/dl/1788111484.f682c6d2b31e852d/wKwRsIl7rmsQ/camartes-field-test.apk</a></p>
   <p>Open this page from <strong>Cursor Preview</strong> on your phone, then tap the orange button. Do not use <code>127.0.0.1</code> — that points to your phone, not the cloud machine.</p>
   <ul>
     <li>Enable <strong>Install unknown apps</strong> for your browser or file manager.</li>
     <li>If Play Protect warns, choose <strong>Install anyway</strong>.</li>
     <li>Uninstall any old <code>com.camartes.field</code> app if install still fails.</li>
   </ul>
-  <p>Demo login: <code>rahul@camartes.com</code> · password <code>field2026</code></p>
+  <p>Sign in with the test account issued to you for this environment.</p>
 </body>
 </html>`;
 
